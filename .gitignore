@@ -1,0 +1,54 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+.env
+.env.*
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Data files (Aggressive Exclusions)
+*.parquet
+*.zip
+*.csv
+*.sqlite*
+*.gz
+*.tar
+*.rar
+*.7z
+data/
+output/
+parquet/
+output_parquet/
+dados_receita/
+scripts_legacy/
+scripts/dados_receita/
+scripts/output_parquet/
+**/payloads/
+
+# Python
+__pycache__/
+*.py[cod]
+*.class
+.venv
+venv/
+ENV/
+.env

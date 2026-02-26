@@ -1,0 +1,12 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+restartPolicyType = "NEVER"
+startCommand = "node scripts/cloud-ingest.js --workers 5"
+healthcheckPath = ""
+
+[env]
+NODE_OPTIONS = "--max-old-space-size=7168"
+MAX_WORKERS = "5"

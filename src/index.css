@@ -1,0 +1,254 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 98%;
+    --foreground: 0 0% 9%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 9%;
+    --primary: 0 0% 9%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 0 0% 96.1%;
+    --secondary-foreground: 0 0% 9%;
+    --muted: 0 0% 96.1%;
+    --muted-foreground: 0 0% 45.1%;
+    --accent: 0 0% 96.1%;
+    --accent-foreground: 0 0% 9%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 89.8%;
+    --input: 0 0% 89.8%;
+    --ring: 0 0% 3.9%;
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 0 0% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 0 0% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 0 0% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 0 0% 9%;
+    --secondary: 0 0% 14.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 0 0% 14.9%;
+    --muted-foreground: 0 0% 63.9%;
+    --accent: 0 0% 14.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 14.9%;
+    --input: 0 0% 14.9%;
+    --ring: 0 0% 83.1%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-white/10;
+  }
+
+  body {
+    @apply bg-zinc-950 tracking-tight antialiased selection:bg-white/20;
+    color: #fff;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+}
+
+/* Base custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Liquid Glass Utilities */
+@layer utilities {
+  .glass {
+    @apply bg-white/5 backdrop-blur-xl border border-white/10 shadow-[0_8px_32px_0_#0000005e];
+  }
+
+  .glass-card {
+    @apply bg-zinc-950/40 backdrop-blur-2xl border border-white/5 shadow-2xl rounded-2xl transition-all duration-500 relative overflow-hidden;
+    box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.1), 0 8px 32px 0 rgba(0, 0, 0, 0.4);
+  }
+
+  .glass-panel {
+    @apply bg-black/30 backdrop-blur-3xl border border-white/10 rounded-3xl shadow-[0_8px_32px_0_#00000099] relative overflow-hidden;
+    box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.05), inset 0 0 20px 0 rgba(255, 255, 255, 0.02);
+  }
+
+  /* The liquid shine effect on the top border of cards */
+  .glass-card::after,
+  .glass-panel::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(to bottom right, rgba(255, 255, 255, 0.2), transparent 40%, rgba(255, 255, 255, 0.05));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+
+  .glass-card:hover {
+    @apply bg-zinc-900/40 translate-y-[-2px] shadow-[0_12px_40px_0_#6464ff1a];
+  }
+
+  .glass-input {
+    @apply bg-zinc-950/60 backdrop-blur-xl border border-white/10 text-white rounded-2xl focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 focus:outline-none transition-all duration-300 placeholder:text-zinc-600 shadow-inner px-4 py-2;
+  }
+
+  .glass-button {
+    @apply relative overflow-hidden bg-white/10 backdrop-blur-md border border-white/20 text-white rounded-xl shadow-lg transition-all duration-300 hover:bg-white/20 hover:scale-[1.02] active:scale-95 flex items-center justify-center font-medium px-4 py-2;
+  }
+
+  .glass-button-primary {
+    @apply relative overflow-hidden bg-white text-black border border-white/20 rounded-xl shadow-[0_0_20px_#ffffff4d] transition-all duration-300 hover:shadow-[0_0_30px_#ffffff80] hover:scale-[1.02] active:scale-95 flex items-center justify-center font-semibold px-4 py-2;
+  }
+
+  .glass-button-primary::before,
+  .glass-button::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: 0.5s;
+  }
+
+  .glass-button-primary::before {
+    background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.1), transparent);
+  }
+
+  .glass-button-primary:hover::before,
+  .glass-button:hover::before {
+    left: 100%;
+  }
+
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-b from-white to-white/50;
+  }
+
+  /* Liquid blob animation classes */
+  .blob {
+    @apply absolute rounded-full mix-blend-screen filter blur-[100px] opacity-30 animate-blob;
+  }
+
+  .animation-delay-2000 {
+    animation-delay: 2s;
+  }
+
+  .animation-delay-4000 {
+    animation-delay: 4s;
+  }
+}
+
+@keyframes blob {
+  0% {
+    transform: translate(0px, 0px) scale(1);
+  }
+
+  33% {
+    transform: translate(30px, -50px) scale(1.1);
+  }
+
+  66% {
+    transform: translate(-20px, 20px) scale(0.9);
+  }
+
+  100% {
+    transform: translate(0px, 0px) scale(1);
+  }
+}
+
+.animate-blob {
+  animation: blob 7s infinite;
+}
+
+/* --- Print Styles for Reports --- */
+@media print {
+
+  /* Hide unnecessary UI elements */
+  nav,
+  button,
+  form,
+  iframe,
+  .blob,
+  .glass-card::after,
+  .glass-panel::after,
+  .no-print {
+    display: none !important;
+  }
+
+  /* Reset backgrounds and colors for a clean white sheet */
+  body,
+  .min-h-screen,
+  .glass-card,
+  .glass-panel,
+  main,
+  div,
+  a {
+    background: white !important;
+    color: black !important;
+    border: none !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    margin: 0 !important;
+  }
+
+  /* Ensure text is black and visible */
+  h1,
+  h2,
+  h3,
+  p,
+  span,
+  svg {
+    color: black !important;
+    background: transparent !important;
+    -webkit-text-fill-color: black !important;
+  }
+
+  /* Adjust Grid Layouts for better paper fitting */
+  .grid {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 1rem !important;
+  }
+
+  .glass-card {
+    page-break-inside: avoid;
+    padding: 0 !important;
+    margin-bottom: 2rem !important;
+    border-bottom: 1px solid #ccc !important;
+    border-radius: 0 !important;
+  }
+
+  /* Print Modes */
+  .print-simple .complete-only {
+    display: none !important;
+  }
+}

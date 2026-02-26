@@ -1,0 +1,25 @@
+node_modules
+dist
+src
+public
+.git
+.vscode
+*.zip
+*.log
+build_error*.log
+nextcloud.html
+tsconfig*.json
+eslint.config.js
+postcss.config.js
+tailwind.config.js
+vite.config.ts
+api-dev-server.js
+api/
+index.html
+README.md
+teste
+# Keep these for ingest:
+# scripts/
+# package.json
+# package-lock.json
+# .env
