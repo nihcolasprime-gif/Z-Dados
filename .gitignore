@@ -25,24 +25,18 @@ dist-ssr
 *.sln
 *.sw?
 
-# Data files (Aggressive Exclusions)
+# Data files (IMPORTANT: Never sync these to GitHub)
 *.parquet
-*.zip
 *.csv
-*.sqlite*
 *.gz
-*.tar
-*.rar
-*.7z
+*.zip
 data/
 output/
 parquet/
+scripts_legacy/
+payloads/
 output_parquet/
 dados_receita/
-scripts_legacy/
-scripts/dados_receita/
-scripts/output_parquet/
-**/payloads/
 
 # Python
 __pycache__/
