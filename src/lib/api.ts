@@ -1,52 +1,47 @@
-import type { Empresa, Socio, SearchFilters } from '../types';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
-
-// 1. Criamos um tipo novo para ensinar o TypeScript sobre a paginação
-export interface SearchResponse {
-    data: Empresa[];
-    page: number;
-    hasNextPage: boolean;
+export interface IAProspeccaoResponse {
+  pergunta: string;
+  resposta: string;
+  resultados: Array<Record<string, unknown>>;
+  fontes: string[];
+  metadata: {
+    provider: string;
+    hf_repo_id: string;
+    hf_cache_ready: boolean;
+  };
 }
 
-// 2. Adicionamos o 3º argumento (page) e mudamos o retorno para SearchResponse
-export async function searchEmpresas(query: string, filters: SearchFilters = {}, page: number = 1): Promise<SearchResponse> {
-    const params = new URLSearchParams();
+const API_ROUTE = '/api/ia-prospeccao';
 
-    if (query) params.set('q', query);
-    params.set('page', String(page));
-    params.set('limit', '50');
-
-    // Mapeia os filtros
-    Object.entries(filters).forEach(([key, value]) => {
-        if (value !== undefined && value !== 'all' && value !== '') {
-            params.set(key, String(value));
-        }
-    });
-
-    const res = await fetch(`${API_BASE}/search?${params.toString()}`);
-    if (!res.ok) throw new Error('Erro na busca');
-    return res.json();
-}
-
-export async function getEmpresa(cnpj: string): Promise<{ empresa: Empresa; socios: Socio[] }> {
-    const res = await fetch(`${API_BASE}/empresa?cnpj=${encodeURIComponent(cnpj)}`);
-    if (!res.ok) throw new Error('Empresa não encontrada');
-    return res.json();
-}
-
-export interface DashboardStats {
-    totalEmpresas: number;
-    ativas: number;
-    inativas: number;
-    mediaCapital: number;
-    topUFs: { uf: string; count: number }[];
-    topCNAEs: { cnae: string; count: number }[];
-}
-
-
-export async function getDashboardStats(): Promise<DashboardStats> {
-    const res = await fetch(`${API_BASE}/stats`);
-    if (!res.ok) throw new Error('Erro ao carregar estatísticas');
-    return res.json();
+export async function fetchIAProspeccao(pergunta: string): Promise<IAProspeccaoResponse> {
+  const params = new URLSearchParams({ pergunta: pergunta.trim() });
+  const response = await fetch(`${API_ROUTE}?${params.toString()}`);
+  
+  // Lemos como texto primeiro para evitar o erro de JSON parse caso dê 502 Bad Gateway (Página HTML do Vercel)
+  const bodyText = await response.text();
+  
+  if (!response.ok) {
+    let errorMessage = `Erro na API (${response.status})`;
+    try {
+      const errorJson = JSON.parse(bodyText);
+      if (errorJson && typeof errorJson === 'object' && 'detail' in errorJson) {
+        errorMessage = errorJson.detail as string;
+      }
+    } catch {
+      // Ignorar se não for JSON, usamos fallback do status code
+    }
+    throw new Error(errorMessage);
+  }
+  
+  let payload: unknown = null;
+  try {
+    payload = JSON.parse(bodyText);
+  } catch {
+    throw new Error('Resposta inválida da API (não é um JSON válido).');
+  }
+  
+  if (!payload || typeof payload !== 'object') {    
+    throw new Error('Resposta inválida da API. Formato inesperado.');   
+  }   
+  
+  return payload as IAProspeccaoResponse;
 }

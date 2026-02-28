@@ -1,73 +1,65 @@
-# React + TypeScript + Vite
+# Z-Dados
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Projeto simplificado para prospecção via IA com frontend React (Vite) e backend FastAPI.
 
-Currently, two official plugins are available:
+## Rotas backend
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- `GET /api/health`
+- `GET /api/ia-prospeccao?pergunta=...`
 
-## React Compiler
+## Variáveis de ambiente
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### Backend
 
-## Expanding the ESLint configuration
+- `GEMINI_API_KEY` (opcional, habilita resposta via Gemini)
+- `GEMINI_MODEL` (opcional, padrão: `gemini-1.5-flash`)
+- `HF_REPO_ID` (opcional, repo/dataset/model no Hugging Face)
+- `HF_REPO_TYPE` (opcional, padrão: `dataset`)
+- `HF_REVISION` (opcional, padrão: `main`)
+- `HF_TOKEN` (opcional, para repo privado)
+- `HF_ALLOW_PATTERNS` (opcional, ex: `*.json,*.txt,*.md`)
+- `HF_CACHE_DIR` (opcional, padrão: `.cache/hf`)
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Rodando local
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+### 1) Frontend
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### 2) Backend
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r backend/requirements.txt
+uvicorn backend.main:app --reload --port 8000
+```
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Testes rápidos
+
+Com backend ativo:
+
+```bash
+curl "http://localhost:8000/api/health"
+curl "http://localhost:8000/api/ia-prospeccao?pergunta=teste"
+```
+
+Com frontend ativo (`npm run dev`), a Home chama `/api/ia-prospeccao` automaticamente.
+
+## Deploy Vercel
+
+- Frontend build: `npm run build`
+- API serverless entrypoint: `api/index.py`
+- Rewrites configurados em `vercel.json` para:
+  - `/api/* -> /api/index.py`
+  - demais rotas -> `/index.html`
+
+Após deploy:
+
+```bash
+curl "https://SEU-DOMINIO.vercel.app/api/health"
+curl "https://SEU-DOMINIO.vercel.app/api/ia-prospeccao?pergunta=teste"
 ```
