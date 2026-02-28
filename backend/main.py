@@ -1,8 +1,8 @@
 import os
 from typing import List
 import duckdb
+import httpx
 
-from google import genai
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -52,14 +52,27 @@ def _run_gemini(pergunta: str, amostra_dados: List[dict]) -> str:
         f"DADOS BRUTOS RETORNADOS DO BANCO:\n{dados_str if dados_str else 'Nenhum dado encontrado para esta busca.'}\n"
     )
 
-    client = genai.Client(api_key=gemini_api_key)
-    response = client.models.generate_content(model=model_name, contents=prompt)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_api_key}"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}]
+    }
 
-    text = getattr(response, "text", "")
-    if not text:
-        return "Não foi possível gerar uma resposta com o Gemini neste momento."
-
-    return text.strip()
+    try:
+        response = httpx.post(url, json=payload, timeout=30.0)
+        response.raise_for_status()
+        data = response.json()
+        
+        candidates = data.get("candidates", [])
+        if not candidates:
+            return "Não foi possível gerar uma resposta. (Sem candidatos na resposta da API)"
+            
+        parts = candidates[0].get("content", {}).get("parts", [])
+        text = "".join(part.get("text", "") for part in parts)
+        return text.strip() if text else "Resposta vazia retornada pela IA."
+        
+    except Exception as e:
+        print(f"Erro ao consultar Gemini via HTTP: {e}")
+        return f"Não foi possível gerar uma resposta com o Gemini neste momento. (Erro: {str(e)})"
 
 
 @app.get("/api/health")

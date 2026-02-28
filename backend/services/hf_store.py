@@ -1,10 +1,7 @@
 import os
 from functools import lru_cache
 from typing import List, Optional, Tuple
-
-from huggingface_hub import HfFileSystem
-
-
+import httpx
 @lru_cache(maxsize=1)
 def _list_remote_assets() -> List[str]:
     repo_id = os.getenv("HF_REPO_ID", "").strip()
@@ -14,15 +11,24 @@ def _list_remote_assets() -> List[str]:
     repo_type = os.getenv("HF_REPO_TYPE", "dataset").strip() or "dataset"
     token = os.getenv("HF_TOKEN") or None
 
-    fs = HfFileSystem(token=token)
-    
-    repo_path = f"datasets/{repo_id}" if repo_type == "dataset" else repo_id
+    url = f"https://huggingface.co/api/{repo_type}s/{repo_id}/tree/main"
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
     
     try:
-        files = fs.ls(repo_path, detail=False)
-        return [f for f in files if getattr(fs.info(f), "type", "file") == "file"]
+        response = httpx.get(url, headers=headers, timeout=15.0)
+        response.raise_for_status()
+        files_data = response.json()
+        
+        parquet_files = []
+        for item in files_data:
+            if item.get("type", "") == "file" and item.get("path", "").endswith(".parquet"):
+                # DuckDB aceita a URL hf://
+                hf_uri = f"hf://{repo_type}s/{repo_id}/{item['path']}"
+                parquet_files.append(hf_uri)
+                
+        return parquet_files
     except Exception as e:
-        print(f"Erro ao listar arquivos do hf: {e}")
+        print(f"Erro ao listar arquivos do HF via API: {e}")
         return []
 
 
