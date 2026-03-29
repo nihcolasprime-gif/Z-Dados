@@ -40,8 +40,9 @@ export default function Login() {
     setLoading(true);
     
     try {
+      const siteUrl = import.meta.env.VITE_SITE_URL || 'https://z-dados.vercel.app';
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/update-password`,
+        redirectTo: `${siteUrl}/update-password`,
       });
       if (error) throw error;
       
