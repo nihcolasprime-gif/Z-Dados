@@ -1,7 +1,6 @@
 'use client';
 
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Users, FileText, Scale, LogOut, CheckSquare, Stethoscope, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { createClient } from '../../utils/supabase/client';
@@ -39,7 +38,9 @@ const navGroups = [
 ];
 
 export function Sidebar({ profile, email }: { profile: any, email: string | undefined }) {
-  const pathname = usePathname();
+  const location = useLocation();
+  const pathname = location.pathname;
+  const navigate = useNavigate();
   const supabase = createClient();
 
   const handleLogout = async () => {
@@ -49,7 +50,7 @@ export function Sidebar({ profile, email }: { profile: any, email: string | unde
     } catch (e) {
       console.warn('Logout error ignored:', e);
     } finally {
-      window.location.href = '/login';
+      navigate('/login');
     }
   };
 
@@ -88,7 +89,7 @@ export function Sidebar({ profile, email }: { profile: any, email: string | unde
                   return (
                     <Link
                       key={item.path}
-                      href={item.path}
+                      to={item.path}
                       className={`${styles.navItem} ${isActive ? styles.active : ''}`}
                     >
                       <Icon size={18} />

@@ -4,12 +4,9 @@ import { Sidebar } from '../../components/Layout/Sidebar';
 import { Topbar } from '../../components/Layout/Topbar';
 import { useAuth } from '../../contexts/AuthContext';
 import styles from '../../components/Layout/Layout.module.css';
+import { Outlet } from 'react-router-dom';
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function DashboardLayout() {
   const { profile, user, loading } = useAuth();
 
   if (loading) {
@@ -26,7 +23,7 @@ export default function DashboardLayout({
       <main className={styles.mainContent}>
         <Topbar />
         <div className={styles.pageContent}>
-          {children}
+          <Outlet />
         </div>
       </main>
     </div>
