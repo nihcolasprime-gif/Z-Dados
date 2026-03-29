@@ -8,12 +8,16 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
-    async function checkAuthStatus() {
+    let isMounted = true;
+
+    async function checkAuth() {
       try {
-        // Tenta pegar a sessão rapidamente
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        // 1. Pega a sessão (sequencial para evitar conflitos de lock)
+        const { data: { session } } = await supabase.auth.getSession();
         
-        if (sessionError || !session) {
+        if (!isMounted) return;
+
+        if (!session) {
           setIsAuthenticated(false);
           setLoading(false);
           return;
@@ -21,41 +25,47 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
         
         setIsAuthenticated(true);
 
-        // Busca o perfil (assinatura/trial)
-        const { data, error: profileError } = await supabase
+        // 2. Busca o perfil apenas se tiver sessão
+        const { data: profile, error: profileError } = await supabase
           .from('perfis')
           .select('assinatura_ativa, trial_until')
           .eq('id', session.user.id)
           .single();
 
+        if (!isMounted) return;
+
         if (profileError) {
-          console.error('Erro ao carregar perfil:', profileError);
-          // Em caso de erro de rede, podemos ser mais permissivos ou restritos. 
-          // Aqui, tentamos acesso zero se falhar totalmente.
+          console.error('Erro de perfil:', profileError);
           setHasAccess(false);
         } else {
-          const isTrialActive = data?.trial_until ? new Date(data.trial_until) > new Date() : false;
-          setHasAccess(data?.assinatura_ativa || isTrialActive);
+          const now = new Date();
+          const trialUntil = profile?.trial_until ? new Date(profile.trial_until) : null;
+          const isTrialValid = trialUntil ? trialUntil > now : false;
+          
+          setHasAccess(profile?.assinatura_ativa || isTrialValid);
         }
       } catch (err) {
-        console.error('Erro crítico na Proteção de Rota:', err);
+        console.error('Erro na verificação de acesso:', err);
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     }
-    
-    checkAuthStatus();
-    
-    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-       if (event === 'SIGNED_OUT' || !session) {
-         setIsAuthenticated(false);
-         setHasAccess(false);
-         setLoading(false);
-       }
+
+    checkAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT' || !session) {
+        if (isMounted) {
+          setIsAuthenticated(false);
+          setHasAccess(false);
+          setLoading(false);
+        }
+      }
     });
 
     return () => {
-       authListener.subscription.unsubscribe();
+      isMounted = false;
+      subscription.unsubscribe();
     };
   }, []);
 
