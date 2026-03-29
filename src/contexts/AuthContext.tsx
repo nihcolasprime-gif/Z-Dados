@@ -45,7 +45,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (data) {
         setProfile(data);
         setEscritorioId(data.escritorio_id);
-        const userRole = data.tipo === 'associado' ? 'collaborator' : data.tipo;
+        // Garante que master continue master, e associado/colaborador vire collaborator para a UI
+        const userRole = data.tipo === 'master' ? 'master' : 'collaborator';
         setRole(userRole);
 
         // Buscar Saúde do Escritório (Trial/Plano)

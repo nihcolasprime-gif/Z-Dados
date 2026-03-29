@@ -23,14 +23,21 @@ export default function Configuracoes() {
     endereco_completo: '',
     cidade: '',
     uf: '',
-    cep: ''
+    cep: '',
+    trial_ends_at: (new Date()).toISOString(),
+    plano: 'gratis',
+    status: 'trial'
   });
   const [contas, setContas] = useState<any[]>([]);
   const [modalBanco, setModalBanco] = useState(false);
   const [bancoForm, setBancoForm] = useState({ id: '', nome: '', tipo: 'digital' });
 
   const carregarConfiguracoes = useCallback(async () => {
-    if (!escritorioId) return;
+    if (!escritorioId) {
+      // Se não tiver ID ainda, aguardamos sem travar o loading infinitamente
+      setTimeout(() => setLoading(false), 2000);
+      return;
+    }
     try {
       const { data, error } = await supabase
         .from('escritorios')

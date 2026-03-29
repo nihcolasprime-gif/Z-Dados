@@ -228,7 +228,14 @@ body {
 
 .modal-content {
   width: 100%;
-  max-height: 90vh;
+  max-height: 85vh; /* Garante que nunca ultrapasse a altura da tela */
+  overflow-y: auto;
+  padding-right: 0.5rem; /* Espaço para a scrollbar custom */
+}
+
+/* Garante scroll dentro dos painéis de vidro quando em telas pequenas */
+.glass-panel.scrollable {
+  max-height: 70vh;
   overflow-y: auto;
 }
 

@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ChevronRight, Landmark, CreditCard, Building2, Coins, ChevronLeft,
-  Trash2, ArrowUpRight, ArrowDownRight, CheckCircle2, Eye, EyeOff, 
-  RefreshCw, X, DollarSign, Plus, Tag
+  Trash2, ArrowUpRight, CheckCircle2, Eye, EyeOff, 
+  X, Plus, Tag
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useApp } from '../../../contexts/AppContext';
@@ -13,7 +13,6 @@ import { Transacao, Contrato } from '../../../models';
 import { financeiroService } from '../../../services/financeiroService';
 import { useAuth } from '../../../contexts/AuthContext';
 
-type FinanceiroTab = 'resumo' | 'receitas' | 'despesas' | 'pendentes';
 
 const CATEGORIAS_RECEITA = ['Honorários Contratuais', 'Honorários Sucumbenciais', 'Consultas', 'Reembolso de Custas', 'Outros'];
 const CATEGORIAS_DESPESA = ['Aluguel/Escritório', 'Marketing/Leads', 'Software/SaaS', 'Impostos', 'Salários', 'Custas Processuais', 'Outros'];
@@ -36,18 +35,17 @@ export default function FinanceiroPage() {
   const isMaster = role === 'master';
   const { reportError } = useApp();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<FinanceiroTab>('resumo');
   const [dadosVisiveis, setDadosVisiveis] = useState(true);
   const [editandoTransacao, setEditandoTransacao] = useState<Transacao | null>(null);
   const [modalTransacao, setModalTransacao] = useState(false);
   const [modalBancos, setModalBancos] = useState(false);
   const [novoBancoForm, setNovoBancoForm] = useState({ nome: '', tipo: 'digital' });
-  const [tipoTransacao, setTipoTransacao] = useState<'receita' | 'despesa' | 'distribuicao'>('receita');
+  const [tipoTransacao, setTipoTransacao] = useState<'receita' | 'despesa' | 'distribuicao'>( 'receita');
 
   const now = new Date();
   const [mesSelecionado, setMesSelecionado] = useState(now.getMonth());
   const [anoSelecionado, setAnoSelecionado] = useState(now.getFullYear());
-  const [pagina] = useState(0);
+  const pagina = 0;
   const ITEMS_PER_PAGE = 50;
   const firstInputRef = useRef<HTMLInputElement>(null);
 
@@ -61,8 +59,8 @@ export default function FinanceiroPage() {
   });
 
   const { data: dashData, error: dashError } = useQuery<FinanceiroData, Error>({
-    queryKey: ['financeiro', anoSelecionado, mesSelecionado, pagina],
-    queryFn: () => financeiroService.fetchDashboardData(anoSelecionado, mesSelecionado, pagina, ITEMS_PER_PAGE),
+    queryKey: ['financeiro', mesSelecionado, pagina],
+    queryFn: () => financeiroService.fetchDashboardData(new Date().getFullYear(), mesSelecionado, pagina, ITEMS_PER_PAGE),
   });
 
   const { data: contasBancarias = [] } = useQuery({
@@ -70,7 +68,7 @@ export default function FinanceiroPage() {
     queryFn: () => financeiroService.fetchContasBancarias(),
   });
 
-  const { mutate: adicionarBanco, isPending: criandoBanco } = useMutation({
+  const { mutate: adicionarBanco } = useMutation({
     mutationFn: () => financeiroService.salvarContaBancaria(novoBancoForm.nome, novoBancoForm.tipo, escritorioId!),
     onSuccess: () => { toast.success('Banco cadastrado!'); queryClient.invalidateQueries({ queryKey: ['contas_bancarias'] }); setNovoBancoForm({ nome: '', tipo: 'digital' }); },
     onError: (err: Error) => toast.error(err.message)
@@ -127,8 +125,8 @@ export default function FinanceiroPage() {
   const transFiltered = useMemo(() => (transacoes || []).filter(t => {
     if (!t.data) return false;
     const d = new Date(t.data);
-    return d.getMonth() === mesSelecionado && d.getFullYear() === anoSelecionado;
-  }), [transacoes, mesSelecionado, anoSelecionado]);
+    return d.getMonth() === mesSelecionado && d.getFullYear() === new Date().getFullYear();
+  }), [transacoes, mesSelecionado]);
 
   const totalReceitas = useMemo(() => transFiltered.filter(t => t.tipo === 'receita' && t.concretizado).reduce((s, t) => s + t.valor, 0), [transFiltered]);
   const totalDespesas = useMemo(() => transFiltered.filter(t => t.tipo === 'despesa' && t.concretizado).reduce((s, t) => s + t.valor, 0), [transFiltered]);
@@ -154,7 +152,7 @@ export default function FinanceiroPage() {
             <button onClick={() => setDadosVisiveis(!dadosVisiveis)} className="btn-outline">{dadosVisiveis ? <Eye size={16} /> : <EyeOff size={16} />}</button>
             <div className="flex gap-2 items-center glass-panel p-2">
                 <button onClick={() => setMesSelecionado(m => m === 0 ? 11 : m - 1)} className="btn-icon text-white"><ChevronLeft size={16} /></button>
-                <span className="text-xs text-white font-bold min-w-[100px] text-center">{MESES[mesSelecionado]} {anoSelecionado}</span>
+                <span className="text-xs text-white font-bold min-w-[100px] text-center">{MESES[mesSelecionado]} {new Date().getFullYear()}</span>
                 <button onClick={() => setMesSelecionado(m => m === 11 ? 0 : m + 1)} className="btn-icon text-white"><ChevronRight size={16} /></button>
             </div>
             <button onClick={() => { setTipoTransacao('receita'); setFormTrans({...formTrans, categoria: 'Honorários Contratuais'}); setModalTransacao(true); }} className="btn-primary"><Plus size={18} /> Novo Lançamento</button>
@@ -183,7 +181,7 @@ export default function FinanceiroPage() {
             </div>
             <div className="glass-panel p-6">
                 <div className="flex justify-between items-center mb-4"><h3 className="text-serif text-white">Contas</h3><button onClick={() => setModalBancos(true)} className="text-[10px] text-secondary font-bold">Gerenciar</button></div>
-                <div className="space-y-3">{contasBancarias.map((b: any) => <div key={b.id} className="flex justify-between items-center text-sm"><div className="flex items-center gap-2 text-white/60">{CONTAS_DEFAULT_ICONS[b.tipo]} <span>{b.nome}</span></div><span className="text-white font-bold" style={blurStyle}>{formatCurrencyBR(getSaldoConta(b.id))}</span></div>)}</div>
+                <div className="space-y-3">{contasBancarias.map((b: { id: string; nome: string; tipo: string }) => <div key={b.id} className="flex justify-between items-center text-sm"><div className="flex items-center gap-2 text-white/60">{CONTAS_DEFAULT_ICONS[b.tipo]} <span>{b.nome}</span></div><span className="text-white font-bold" style={blurStyle}>{formatCurrencyBR(getSaldoConta(b.id))}</span></div>)}</div>
             </div>
         </div>
       )}
@@ -215,7 +213,7 @@ export default function FinanceiroPage() {
       <AnimatePresence>
         {modalTransacao && (
           <div className="modal-overlay">
-            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="modal-content glass-panel w-full max-w-xl p-8">
+            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="modal-content glass-panel w-full max-w-xl p-8 scrollable">
               <div className="flex justify-between items-center mb-8">
                 <h3 className="text-xl text-white font-serif uppercase tracking-widest">{tipoTransacao}</h3>
                 <button onClick={() => setModalTransacao(false)}><X size={20} className="text-white/40" /></button>
@@ -256,7 +254,7 @@ export default function FinanceiroPage() {
       <AnimatePresence>
           {modalBancos && (
               <div className="modal-overlay">
-                  <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="modal-content glass-panel w-full max-w-sm p-6">
+                  <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="modal-content glass-panel w-full max-w-sm p-6 scrollable">
                       <div className="flex justify-between items-center mb-6"><h3 className="text-white">Gerenciar Bancos</h3><button onClick={() => setModalBancos(false)}><X size={18} /></button></div>
                       <div className="flex gap-2 mb-4">
                           <input className="dark-input text-xs flex-1" placeholder="Nome do banco..." value={novoBancoForm.nome} onChange={e => setNovoBancoForm({...novoBancoForm, nome: e.target.value})} />
