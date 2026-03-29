@@ -15,7 +15,7 @@ export default function AguardandoAprovacao() {
         </h1>
         
         <p className="text-white/50 mb-8 font-light leading-relaxed">
-          Recebemos o seu cadastro! Seu painel será desbloqueado automaticamente assim que a InfinitePay confirmar o processamento da sua assinatura.
+          Recebemos o seu cadastro! Seu painel será desbloqueado automaticamente assim que a Hotmart confirmar o processamento da sua assinatura ou o seu período de trial for validado.
         </p>
         
         <div className="flex flex-col gap-4">

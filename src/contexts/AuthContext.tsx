@@ -51,7 +51,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const now = new Date();
         const trialUntil = perfilRes.data.trial_until ? new Date(perfilRes.data.trial_until) : null;
         const isTrialValid = trialUntil ? trialUntil > now : false;
-        setHasAccess(perfilRes.data.assinatura_ativa || isTrialValid);
+        
+        // Whitelist do Proprietário: Sempre tem acesso
+        if (userObj.email === 'zlinemkt@gmail.com') {
+          setHasAccess(true);
+        } else {
+          setHasAccess(perfilRes.data.assinatura_ativa || isTrialValid);
+        }
+      } else if (userObj.email === 'zlinemkt@gmail.com') {
+        // Fallback: Mesmo se o perfil não existir, libera o dono.
+        setHasAccess(true);
       }
     } catch (err) {
       console.error('Erro ao buscar perfil completo:', err);
