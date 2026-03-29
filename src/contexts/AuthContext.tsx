@@ -9,6 +9,7 @@ interface AuthContextType {
   profile: Colaborador | null;
   role: string | null;
   escritorioId: string | null;
+  hasAccess: boolean;
   loading: boolean;
 }
 
@@ -28,58 +29,97 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<Colaborador | null>(null);
   const [escritorioId, setEscritorioId] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
+  const [hasAccess, setHasAccess] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const fetchProfile = useCallback(async (userObj: User) => {
     try {
-      const { data, error } = await supabase
-        .from('colaboradores')
-        .select('*')
-        .eq('email', userObj.email)
-        .maybeSingle();
+      // Busca dados de colaborador e dados de assinatura (perfis) em paralelo
+      const [colaboradorRes, perfilRes] = await Promise.all([
+        supabase.from('colaboradores').select('*').eq('email', userObj.email).maybeSingle(),
+        supabase.from('perfis').select('assinatura_ativa, trial_until').eq('id', userObj.id).maybeSingle()
+      ]);
 
-      if (!error && data) {
-        setProfile(data);
-        setEscritorioId(data.escritorio_id);
-        const userRole = data.tipo === 'associado' ? 'collaborator' : data.tipo;
+      if (colaboradorRes.data) {
+        setProfile(colaboradorRes.data);
+        setEscritorioId(colaboradorRes.data.escritorio_id);
+        const userRole = colaboradorRes.data.tipo === 'associado' ? 'collaborator' : colaboradorRes.data.tipo;
         setRole(userRole);
       }
+
+      if (perfilRes.data) {
+        const now = new Date();
+        const trialUntil = perfilRes.data.trial_until ? new Date(perfilRes.data.trial_until) : null;
+        const isTrialValid = trialUntil ? trialUntil > now : false;
+        setHasAccess(perfilRes.data.assinatura_ativa || isTrialValid);
+      }
     } catch (err) {
-      console.error('Erro ao buscar perfil:', err);
+      console.error('Erro ao buscar perfil completo:', err);
     }
   }, []);
 
   useEffect(() => {
-    const initialize = async () => {
-      const { data: { session: initialSession } } = await supabase.auth.getSession();
-      setSession(initialSession);
-      setUser(initialSession?.user ?? null);
-      if (initialSession?.user) {
-        await fetchProfile(initialSession.user);
+    let isMounted = true;
+
+    // Timer de emergência para destravar o loading após 5 segundos
+    const fallbackTimer = setTimeout(() => {
+      if (isMounted) {
+        console.warn('⚠️ AUTH TIMEOUT: Destravando interface após 5s.');
+        setLoading(false);
       }
-      setLoading(false);
+    }, 5000);
+
+    const initialize = async () => {
+      try {
+        const { data: { session: initialSession }, error } = await supabase.auth.getSession();
+        
+        if (!isMounted) return;
+        if (error) throw error;
+
+        setSession(initialSession);
+        setUser(initialSession?.user ?? null);
+        
+        if (initialSession?.user) {
+          await fetchProfile(initialSession.user);
+        }
+      } catch (err) {
+        console.error('Erro na inicialização da Auth:', err);
+      } finally {
+        if (isMounted) {
+          clearTimeout(fallbackTimer);
+          setLoading(false);
+        }
+      }
     };
 
     initialize();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
+      if (!isMounted) return;
+      
       setSession(newSession);
       setUser(newSession?.user ?? null);
+      
       if (newSession?.user) {
         await fetchProfile(newSession.user);
-      } else {
+      } else if (event === 'SIGNED_OUT') {
         setProfile(null);
         setEscritorioId(null);
         setRole(null);
       }
+      
       setLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      isMounted = false;
+      clearTimeout(fallbackTimer);
+      subscription.unsubscribe();
+    };
   }, [fetchProfile]);
 
   return (
-    <AuthContext.Provider value={{ session, user, profile, escritorioId, role, loading }}>
+    <AuthContext.Provider value={{ session, user, profile, escritorioId, role, hasAccess, loading }}>
       {children}
     </AuthContext.Provider>
   );

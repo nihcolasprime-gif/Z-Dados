@@ -16,45 +16,40 @@ export default function Login() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return;
     setLoading(true);
     
     try {
-      // 1. Limpeza agressiva para evitar "Auth Locks"
+      // 1. Limpeza de sessão anterior para evitar conflitos de Lock
       localStorage.removeItem('supabase.auth.token');
       await supabase.auth.signOut().catch(() => {});
       
-      // 2. Timeout de 10 segundos para não travar o botão
-      const timeout = setTimeout(() => {
-        setLoading(false);
-        toast.error('O sistema demorou muito para responder.', {
-          description: 'A rede pode estar lenta. Tente clicar novamente.'
-        });
-      }, 10000);
-
+      // 2. Tentativa de login
       const { data, error } = await supabase.auth.signInWithPassword({ 
         email: email.trim(), 
         password 
       });
 
-      clearTimeout(timeout);
-
-      if (error) throw error;
+      if (error) {
+        if (error.message === 'Invalid login credentials') {
+          throw new Error('E-mail ou senha incorretos.');
+        }
+        throw error;
+      }
       
       if (data?.session) {
-        toast.success('Acesso liberado!');
-        // 3. Força o recarregamento total para evitar conflitos de rotas
+        toast.success('Acesso autorizado!', {
+          description: 'Carregando seu dashboard...'
+        });
+        
+        // 3. Redirecionamento de hardware para garantir limpeza de cache e estado
         setTimeout(() => {
           window.location.href = '/dashboard/finance';
-        }, 500);
-      } else {
-        throw new Error('Erro ao criar sessão');
+        }, 800);
       }
-
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Erro desconhecido';
-      toast.error(message === 'Invalid login credentials' 
-        ? 'Credenciais incorretas.' 
-        : 'Erro: ' + message);
+      const message = err instanceof Error ? err.message : 'Falha na conexão';
+      toast.error(message);
       setLoading(false);
     }
   };
