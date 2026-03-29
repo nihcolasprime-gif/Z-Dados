@@ -14,8 +14,9 @@ const CRMPage = lazy(() => import('./pages/dashboard/crm'));
 const AtendimentosPage = lazy(() => import('./pages/dashboard/atendimentos'));
 const ConsultasPage = lazy(() => import('./pages/dashboard/consultas'));
 const ContratosPage = lazy(() => import('./pages/dashboard/contratos'));
-const ColaboradoresPage = lazy(() => import('./pages/dashboard/colaboradores'));
+const EquipePage = lazy(() => import('./pages/dashboard/configuracoes/equipe'));
 const RelatoriosPage = lazy(() => import('./pages/dashboard/relatorios'));
+const DocumentosPage = lazy(() => import('./pages/dashboard/documentos'));
 const UpdatePassword = lazy(() => import('./pages/update-password'));
 
 const queryClient = new QueryClient({
@@ -58,8 +59,9 @@ export function App() {
                       <Route path="atendimentos" element={<AtendimentosPage />} />
                       <Route path="consultas" element={<ConsultasPage />} />
                       <Route path="contratos" element={<ContratosPage />} />
-                      <Route path="colaboradores" element={<ColaboradoresPage />} />
+                      <Route path="equipe" element={<EquipePage />} />
                       <Route path="relatorios" element={<RelatoriosPage />} />
+                      <Route path="documentos" element={<DocumentosPage />} />
                       <Route path="configuracoes" element={<Configuracoes />} />
                       <Route path="*" element={<Navigate to="/not-found" />} />
                     </Routes>

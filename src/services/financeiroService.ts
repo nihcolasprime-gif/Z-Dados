@@ -8,6 +8,7 @@ export interface SaveTransacaoParams {
     valor: string;
     data: string;
     status: 'pendente' | 'recebido' | 'pago';
+    categoria: string;
     referencia: string;
     conta: string;
     parcelas: string;
@@ -18,6 +19,7 @@ export interface SaveTransacaoParams {
   editandoTransacao: Transacao | null;
   contratos: Contrato[];
   parseCurrency: (val: string) => number;
+  escritorioId: string;
 }
 
 export const financeiroService = {
@@ -42,7 +44,7 @@ export const financeiroService = {
     };
   },
 
-  salvarTransacao: async ({ formTrans, tipoTransacao, editandoTransacao, contratos, parseCurrency }: SaveTransacaoParams) => {
+  salvarTransacao: async ({ formTrans, tipoTransacao, editandoTransacao, contratos, parseCurrency, escritorioId }: SaveTransacaoParams) => {
     if (!formTrans.entidade || !formTrans.valor) throw new Error('Preencha os dados');
 
     const valorOriginalCents = Math.round(parseCurrency(formTrans.valor) * 100);
@@ -64,11 +66,13 @@ export const financeiroService = {
         valor: valorOriginalCents / 100, 
         data: formTrans.data, 
         entidade: formTrans.entidade, 
+        categoria: formTrans.categoria || 'Outros',
         status: formTrans.status,
         concretizado: formTrans.status === 'recebido' || formTrans.status === 'pago', 
         referencia: formTrans.referencia || formTrans.entidade, 
         conta: formTrans.conta, 
-        tipo: tipoTransacao
+        tipo: tipoTransacao,
+        escritorio_id: escritorioId
       }).eq('id', editandoTransacao.id);
       
       if (error) throw error;
@@ -81,14 +85,16 @@ export const financeiroService = {
         return {
           tipo: template.tipo,
           entidade: template.entidade,
-          beneficiario_id: colabId,
+          colaborador_id: colabId,
+          categoria: template.tipo === 'distribuicao' ? 'Comissão' : 'Imposto',
           valor: Math.round(valorOriginalCents * template.percentual / 100) / 100,
           data: formTrans.data, 
           parent_id: editandoTransacao.id, 
           concretizado: false, 
           status: 'pendente',
           referencia: template.tipo === 'despesa' ? `Imposto / ${formTrans.referencia || formTrans.entidade}` : formTrans.referencia, 
-          conta: formTrans.conta
+          conta: formTrans.conta,
+          escritorio_id: escritorioId
         };
       }).filter(c => c.valor > 0);
       
@@ -107,10 +113,12 @@ export const financeiroService = {
           valor: (i === 0 ? valorBaseCents + restoCents : valorBaseCents) / 100,
           data: parcDate.toISOString().split('T')[0], 
           entidade: formTrans.entidade, 
+          categoria: formTrans.categoria || 'Outros',
           status: formTrans.status,
           concretizado: formTrans.status === 'recebido' || formTrans.status === 'pago',
           referencia: qtdParcelas > 1 ? `${formTrans.referencia || formTrans.entidade} (${i + 1}/${qtdParcelas})` : formTrans.referencia,
-          conta: formTrans.conta
+          conta: formTrans.conta,
+          escritorio_id: escritorioId
         };
       });
 
@@ -131,20 +139,30 @@ export const financeiroService = {
             if (valorChildFinal > 0) allChildren.push({
               tipo: template.tipo,
               entidade: template.entidade,
-              beneficiario_id: colabId,
+              colaborador_id: colabId,
+              categoria: template.tipo === 'distribuicao' ? 'Comissão' : 'Imposto',
               valor: valorChildFinal / 100, 
               data: main.data, 
               parent_id: main.id,
               status: 'pendente',
               concretizado: false,
               referencia: template.tipo === 'despesa' ? `Imposto / ${main.referencia}` : main.referencia, 
-              conta: main.conta
+              conta: main.conta,
+              escritorio_id: escritorioId
             });
           });
         });
         if (allChildren.length > 0) await supabase.from('transacoes').insert(allChildren);
       }
     }
+  },
+
+  // 1b. Versão Moderna com Auditoria SaaS
+  salvarTransacaoSaaS: async (transacao: any, escritorioId: string) => {
+    const { error } = await supabase
+      .from('transacoes')
+      .upsert([{ ...transacao, escritorio_id: escritorioId }]);
+    if (error) throw error;
   },
 
   excluirTransacao: async (id: string) => {
@@ -165,5 +183,54 @@ export const financeiroService = {
     const { error } = await supabase.from('transacoes').update({ status: 'pago', concretizado: true, data_pagamento: new Date().toISOString().split('T')[0] }).in('id', ids);
     if (error) throw error;
     return liberadas;
+  },
+
+  // --- NOVAS FUNÇÕES PARA BANCOS DINÂMICOS ---
+  fetchContasBancarias: async () => {
+    const { data, error } = await supabase
+      .from('contas_bancarias')
+      .select('*')
+      .order('nome', { ascending: true });
+    
+    if (error) throw error;
+    return data || [];
+  },
+
+  salvarContaBancaria: async (nome: string, tipo: string, escritorioId: string) => {
+    const { data, error } = await supabase
+      .from('contas_bancarias')
+      .insert([{ nome, tipo, escritorio_id: escritorioId }])
+      .select();
+    
+    if (error) throw error;
+    return data?.[0];
+  },
+
+  atualizarContaBancaria: async (id: string, nome: string, tipo: string) => {
+    const { error } = await supabase
+      .from('contas_bancarias')
+      .update({ nome, tipo })
+      .eq('id', id);
+    if (error) throw error;
+  },
+
+  excluirContaBancaria: async (id: string) => {
+    // Verificar se existem transações vinculadas a este banco (Integridade)
+    const { count, error: checkError } = await supabase
+      .from('transacoes')
+      .select('*', { count: 'exact', head: true })
+      .eq('conta', id);
+    
+    if (checkError) throw checkError;
+    if (count && count > 0) {
+      throw new Error(`Não é possível excluir este banco: existem ${count} lançamentos vinculados a ele.`);
+    }
+
+    const { error } = await supabase
+      .from('contas_bancarias')
+      .delete()
+      .eq('id', id);
+    
+    if (error) throw error;
   }
 };

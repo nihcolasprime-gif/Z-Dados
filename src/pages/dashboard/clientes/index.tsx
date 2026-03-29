@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Search, Building2, User, X, Save, Trash2, ChevronRight } from 'lucide-react';
+import { Plus, Search, Building2, User, X, Save, Trash2, ChevronRight, Clock, CreditCard, Gavel, Sparkles } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { clienteService } from '../../../services/clienteService';
+import { supabase } from '../../../lib/supabase';
 import { Cliente } from '../../../models';
 import { toast } from 'sonner';
 import { generateProcuracaoHTML } from '../../../services/documentGenerator';
@@ -15,6 +16,9 @@ export default function ClientesPage() {
   const [createdCliente, setCreatedCliente] = useState<Cliente | null>(null);
   const [editando, setEditando] = useState<Cliente | null>(null);
   const [filtro, setFiltro] = useState('');
+  const [activeTab, setActiveTab] = useState<'ficha' | 'jornada'>('ficha');
+  const [timeline, setTimeline] = useState<any[]>([]);
+  const [loadingTimeline, setLoadingTimeline] = useState(false);
 
   const [form, setForm] = useState({
     nome: '', tipo: 'PF' as 'PF' | 'PJ', doc: '', email: '', contato: '',
@@ -78,8 +82,31 @@ export default function ClientesPage() {
     if (win) { win.document.write(html); win.document.close(); }
   };
 
+  const carregarTimeline = async (cliente: Cliente) => {
+    setLoadingTimeline(true);
+    try {
+      const [crm, atend, proc, trans] = await Promise.all([
+        supabase.from('crm_orcamentos').select('*').or(`email_prospect.eq.${cliente.email},nome_prospect.ilike.%${cliente.nome}%`),
+        supabase.from('atendimentos').select('*').eq('cliente_id', cliente.id),
+        supabase.from('processos').select('*').eq('cliente_id', cliente.id),
+        supabase.from('transacoes').select('*').eq('entidade', cliente.nome)
+      ]);
+
+      const events: any[] = [];
+      if (crm.data) crm.data.forEach(item => events.push({ date: item.created_at, title: 'Prospecção CRM', desc: `Origem: ${item.origem || 'Direta'}`, type: 'crm', icon: <Sparkles size={14}/> }));
+      if (atend.data) atend.data.forEach(item => events.push({ date: item.data, title: 'Atendimento/Consulta', desc: item.descricao, type: 'atend', icon: <Clock size={14}/> }));
+      if (proc.data) proc.data.forEach(item => events.push({ date: item.data_inicio, title: `Contrato: #${item.numero}`, desc: item.natureza, type: 'proc', icon: <Gavel size={14}/> }));
+      if (trans.data) trans.data.forEach(item => events.push({ date: item.data, title: `${item.tipo === 'receita' ? 'Pagamento' : 'Despesa'}`, desc: item.categoria, type: 'finance', icon: <CreditCard size={14}/> }));
+
+      setTimeline(events.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+    } catch (e) { console.error(e); }
+    finally { setLoadingTimeline(false); }
+  };
+
   const abrirEdicao = (c: Cliente) => {
     setEditando(c);
+    setActiveTab('ficha');
+    carregarTimeline(c);
     setForm({ nome: c.nome, tipo: c.tipo, doc: c.documento || c.doc || '', email: c.email || '', contato: c.contato || '', rg: c.rg || '', estadoCivil: c.estado_civil || '', profissao: c.profissao || '', endereco: c.endereco || '', numero: c.numero || '', complemento: c.complemento || '', cidade: c.cidade || 'Santa Maria', uf: c.uf || 'RS', cep: c.cep || '', data_nascimento: c.data_nascimento || '' });
     setShowModal(true);
   };
@@ -133,37 +160,70 @@ export default function ClientesPage() {
                   </div>
                 )}
                 {editando && (
-                  <div className="flex items-center gap-3 p-4 glass-panel mb-2">
-                    <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-white">
-                      {form.tipo === 'PJ' ? <Building2 size={22} /> : <User size={22} />}
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted font-bold uppercase">Tipo de Cliente</p>
-                      <p className="text-white font-bold">{form.tipo === 'PJ' ? 'Pessoa Jurídica' : 'Pessoa Física'}</p>
-                    </div>
+                  <div className="flex gap-4 border-b border-white/5 mb-4">
+                    <button onClick={() => setActiveTab('ficha')} className={`pb-2 text-sm font-bold ${activeTab === 'ficha' ? 'text-secondary border-b-2 border-secondary' : 'text-muted'}`}>Ficha Cadastral</button>
+                    <button onClick={() => setActiveTab('jornada')} className={`pb-2 text-sm font-bold ${activeTab === 'jornada' ? 'text-secondary border-b-2 border-secondary' : 'text-muted'}`}>Jornada 360</button>
                   </div>
                 )}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="input-group"><label>Nome *</label><input className="dark-input" value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} /></div>
-                  <div className="input-group"><label>{form.tipo === 'PJ' ? 'CNPJ *' : 'CPF *'}</label><input className="dark-input" value={form.doc} onChange={e => setForm({ ...form, doc: e.target.value })} /></div>
-                </div>
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="input-group col-span-2"><label>CEP</label><input className="dark-input" value={form.cep} onChange={e => setForm({ ...form, cep: e.target.value })} /></div>
-                  <div className="input-group"><label>&nbsp;</label><button className="btn-outline w-full h-[42px]" onClick={() => buscarCEP(form.cep)}>Buscar</button></div>
-                </div>
-                <div className="input-group"><label>Endereço</label><input className="dark-input" value={form.endereco} onChange={e => setForm({ ...form, endereco: e.target.value })} /></div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="input-group"><label>Número</label><input className="dark-input" value={form.numero} onChange={e => setForm({ ...form, numero: e.target.value })} /></div>
-                  <div className="input-group"><label>Complemento</label><input className="dark-input" value={form.complemento} onChange={e => setForm({ ...form, complemento: e.target.value })} /></div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="input-group"><label>Cidade</label><input className="dark-input" value={form.cidade} onChange={e => setForm({ ...form, cidade: e.target.value })} /></div>
-                  <div className="input-group"><label>UF</label><input className="dark-input" value={form.uf} onChange={e => setForm({ ...form, uf: e.target.value })} /></div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="input-group"><label>E-mail</label><input type="email" className="dark-input" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></div>
-                  <div className="input-group"><label>Contato</label><input className="dark-input" value={form.contato} onChange={e => setForm({ ...form, contato: e.target.value })} /></div>
-                </div>
+
+                {activeTab === 'ficha' ? (
+                  <div className="flex flex-col gap-4">
+                    {editando && (
+                      <div className="flex items-center gap-3 p-4 glass-panel mb-2">
+                        <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-white">
+                          {form.tipo === 'PJ' ? <Building2 size={22} /> : <User size={22} />}
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted font-bold uppercase">Tipo de Cliente</p>
+                          <p className="text-white font-bold">{form.tipo === 'PJ' ? 'Pessoa Jurídica' : 'Pessoa Física'}</p>
+                        </div>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="input-group"><label>Nome *</label><input className="dark-input" value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} /></div>
+                      <div className="input-group"><label>{form.tipo === 'PJ' ? 'CNPJ *' : 'CPF *'}</label><input className="dark-input" value={form.doc} onChange={e => setForm({ ...form, doc: e.target.value })} /></div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="input-group col-span-2"><label>CEP</label><input className="dark-input" value={form.cep} onChange={e => setForm({ ...form, cep: e.target.value })} /></div>
+                      <div className="input-group"><label>&nbsp;</label><button className="btn-outline w-full h-[42px]" onClick={() => buscarCEP(form.cep)}>Buscar</button></div>
+                    </div>
+                    <div className="input-group"><label>Endereço</label><input className="dark-input" value={form.endereco} onChange={e => setForm({ ...form, endereco: e.target.value })} /></div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="input-group"><label>Número</label><input className="dark-input" value={form.numero} onChange={e => setForm({ ...form, numero: e.target.value })} /></div>
+                      <div className="input-group"><label>Complemento</label><input className="dark-input" value={form.complemento} onChange={e => setForm({ ...form, complemento: e.target.value })} /></div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="input-group"><label>Cidade</label><input className="dark-input" value={form.cidade} onChange={e => setForm({ ...form, cidade: e.target.value })} /></div>
+                      <div className="input-group"><label>UF</label><input className="dark-input" value={form.uf} onChange={e => setForm({ ...form, uf: e.target.value })} /></div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="input-group"><label>E-mail</label><input type="email" className="dark-input" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></div>
+                      <div className="input-group"><label>Contato</label><input className="dark-input" value={form.contato} onChange={e => setForm({ ...form, contato: e.target.value })} /></div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-6 max-h-[400px] overflow-y-auto pr-2">
+                    {loadingTimeline ? (
+                      <div className="p-8 text-center text-muted">Mapeando rastro do cliente...</div>
+                    ) : (
+                      <div className="relative border-l border-white/10 ml-3 space-y-8">
+                        {timeline.map((event, idx) => (
+                          <div key={idx} className="relative pl-8">
+                            <div className="absolute -left-[15px] w-7 h-7 rounded-full bg-secondary/20 border border-secondary/50 flex items-center justify-center text-secondary">
+                              {event.icon}
+                            </div>
+                            <div>
+                               <p className="text-[10px] text-muted font-bold uppercase mb-1">{new Date(event.date).toLocaleDateString('pt-BR')}</p>
+                               <h4 className="text-white text-sm font-bold">{event.title}</h4>
+                               <p className="text-xs text-muted">{event.desc}</p>
+                            </div>
+                          </div>
+                        ))}
+                        {timeline.length === 0 && <div className="p-8 text-center text-muted border border-dashed border-white/5 rounded-xl">Nenhum evento registrado na Teia Jurídica.</div>}
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="flex gap-3 mt-4">
                   <button className="btn-primary flex-1" onClick={handleSalvar}><Save size={18} /> {editando ? 'Atualizar Ficha' : 'Criar Cliente'}</button>
                   {editando && <button className="btn-outline text-red-400 border-red-400/30" onClick={() => handleExcluir(editando.id)}><Trash2 size={18} /></button>}

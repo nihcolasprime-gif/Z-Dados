@@ -1,9 +1,11 @@
 import { BottomNav } from './BottomNav';
 import { motion } from 'framer-motion';
+import { TrialExpiredOverlay } from '../dashboard/TrialExpiredOverlay';
 
 export function GlassLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col md:flex-row relative overflow-hidden">
+      <TrialExpiredOverlay />
       <BottomNav />
 
       {/* Main Content — offset for sidebar on desktop (280px), bottom nav on mobile */}

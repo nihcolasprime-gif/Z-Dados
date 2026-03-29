@@ -2,8 +2,8 @@ import { Link, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   DollarSign, Users, Briefcase, FileText, Scale,
-  MessageSquare, PieChart, Settings, UserCircle,
-  LayoutDashboard, Plus
+  MessageSquare, PieChart, Settings,
+  LayoutDashboard, Plus, FileSignature
 } from 'lucide-react';
 
 const navItems = [
@@ -13,15 +13,15 @@ const navItems = [
   { path: '/dashboard/contratos', icon: Scale, label: 'Contratos' },
   { path: '/dashboard/consultas', icon: MessageSquare, label: 'Consultas' },
   { path: '/dashboard/atendimentos', icon: FileText, label: 'Atendimentos' },
-  { path: '/dashboard/colaboradores', icon: UserCircle, label: 'Equipe' },
+  { path: '/dashboard/documentos', icon: FileSignature, label: 'Documentos' },
+  { path: '/dashboard/equipe', icon: Users, label: 'Minha Equipe' },
   { path: '/dashboard/relatorios', icon: PieChart, label: 'Relatórios' },
 ];
 
 const mobileNavItems = [
   { path: '/dashboard/finance', icon: DollarSign, label: 'Finance' },
   { path: '/dashboard/contratos', icon: Scale, label: 'Contratos' },
-  { path: '/dashboard/crm', icon: Briefcase, label: 'CRM' },
-  { path: '/dashboard/clientes', icon: Users, label: 'Clientes' },
+  { path: '/dashboard/equipe', icon: Users, label: 'Equipe' },
   { path: '/dashboard/relatorios', icon: PieChart, label: 'Mais' },
 ];
 

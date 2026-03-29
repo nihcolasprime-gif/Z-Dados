@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import { Colaborador } from '../models';
+import { Colaborador, Escritorio } from '../models';
 
 interface AuthContextType {
   session: Session | null;
@@ -9,6 +9,8 @@ interface AuthContextType {
   profile: Colaborador | null;
   role: string | null;
   escritorioId: string | null;
+  escritorio: Escritorio | null;
+  isTrialExpired: boolean;
   loading: boolean;
 }
 
@@ -27,6 +29,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Colaborador | null>(null);
   const [escritorioId, setEscritorioId] = useState<string | null>(null);
+  const [escritorio, setEscritorio] = useState<Escritorio | null>(null);
+  const [isTrialExpired, setIsTrialExpired] = useState(false);
   const [role, setRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -43,6 +47,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setEscritorioId(data.escritorio_id);
         const userRole = data.tipo === 'associado' ? 'collaborator' : data.tipo;
         setRole(userRole);
+
+        // Buscar Saúde do Escritório (Trial/Plano)
+        const { data: escData } = await supabase
+          .from('escritorios')
+          .select('*')
+          .eq('id', data.escritorio_id)
+          .maybeSingle();
+
+        if (escData) {
+          setEscritorio(escData);
+          const trialExpired = escData.status === 'vencido' || 
+                             (escData.status === 'trial' && new Date(escData.trial_ends_at) < new Date());
+          setIsTrialExpired(trialExpired);
+        }
       }
     } catch (err) {
       console.error('Erro ao buscar perfil completo:', err);
@@ -97,6 +115,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } else if (event === 'SIGNED_OUT') {
         setProfile(null);
         setEscritorioId(null);
+        setEscritorio(null);
+        setIsTrialExpired(false);
         setRole(null);
       }
       
@@ -111,7 +131,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [fetchProfile]);
 
   return (
-    <AuthContext.Provider value={{ session, user, profile, escritorioId, role, loading }}>
+    <AuthContext.Provider value={{ session, user, profile, escritorioId, escritorio, isTrialExpired, role, loading }}>
       {children}
     </AuthContext.Provider>
   );

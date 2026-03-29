@@ -1,87 +1,92 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  ChevronRight,
-  Landmark, CreditCard, Building2, Coins, ChevronLeft,
-  Edit2, Trash2, ArrowUpRight, ArrowDownRight,
-  PieChart as PieChartIcon,
-  CheckCircle2, Eye, EyeOff, RefreshCw, X, DollarSign, Plus
+  ChevronRight, Landmark, CreditCard, Building2, Coins, ChevronLeft,
+  Trash2, ArrowUpRight, ArrowDownRight, CheckCircle2, Eye, EyeOff, 
+  RefreshCw, X, DollarSign, Plus, Tag
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useApp } from '../../../contexts/AppContext';
 import { toast } from 'sonner';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from 'recharts';
 import { Transacao, Contrato } from '../../../models';
 import { financeiroService } from '../../../services/financeiroService';
+import { useAuth } from '../../../contexts/AuthContext';
 
 type FinanceiroTab = 'resumo' | 'receitas' | 'despesas' | 'pendentes';
 
-const CONTAS = [
-  { id: 'BB', nome: 'Banco do Brasil', icone: <Landmark size={16} /> },
-  { id: 'Asaas', nome: 'Asaas', icone: <CreditCard size={16} /> },
-  { id: 'Nubank', nome: 'Nubank', icone: <CreditCard size={16} /> },
-  { id: 'Sicoob', nome: 'Sicoob', icone: <Building2 size={16} /> },
-  { id: 'Dinheiro', nome: 'Dinheiro', icone: <Coins size={16} /> },
-];
+const CATEGORIAS_RECEITA = ['Honorários Contratuais', 'Honorários Sucumbenciais', 'Consultas', 'Reembolso de Custas', 'Outros'];
+const CATEGORIAS_DESPESA = ['Aluguel/Escritório', 'Marketing/Leads', 'Software/SaaS', 'Impostos', 'Salários', 'Custas Processuais', 'Outros'];
 
-const MESES = [
-  'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
-  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
-];
+const CONTAS_DEFAULT_ICONS: Record<string, JSX.Element> = {
+  'corrente': <Building2 size={16} />,
+  'digital': <CreditCard size={16} />,
+  'poupanca': <Landmark size={16} />,
+  'dinheiro': <Coins size={16} />,
+  'investimento': <ArrowUpRight size={16} />,
+  'outro': <ChevronRight size={16} />
+};
 
-interface FinanceiroData {
-  transacoes: Transacao[];
-  contratos: Contrato[];
-  colaboradores: { id: string; nome: string; }[];
-}
+const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+
+interface FinanceiroData { transacoes: Transacao[]; contratos: Contrato[]; colaboradores: { id: string; nome: string; }[]; }
 
 export default function FinanceiroPage() {
+  const { escritorioId, role } = useAuth();
+  const isMaster = role === 'master';
   const { reportError } = useApp();
   const queryClient = useQueryClient();
-
   const [activeTab, setActiveTab] = useState<FinanceiroTab>('resumo');
   const [dadosVisiveis, setDadosVisiveis] = useState(true);
   const [editandoTransacao, setEditandoTransacao] = useState<Transacao | null>(null);
   const [modalTransacao, setModalTransacao] = useState(false);
+  const [modalBancos, setModalBancos] = useState(false);
+  const [novoBancoForm, setNovoBancoForm] = useState({ nome: '', tipo: 'digital' });
   const [tipoTransacao, setTipoTransacao] = useState<'receita' | 'despesa' | 'distribuicao'>('receita');
 
   const now = new Date();
   const [mesSelecionado, setMesSelecionado] = useState(now.getMonth());
   const [anoSelecionado, setAnoSelecionado] = useState(now.getFullYear());
-  const [pagina, setPagina] = useState(0);
+  const [pagina] = useState(0);
   const ITEMS_PER_PAGE = 50;
   const firstInputRef = useRef<HTMLInputElement>(null);
 
   const [formTrans, setFormTrans] = useState({
     entidade: '', valor: '', data: now.toISOString().split('T')[0],
     status: 'pendente' as 'pendente' | 'recebido' | 'pago',
-    concretizado: false, referencia: '', conta: 'BB',
+    categoria: 'Outros',
+    concretizado: false, referencia: '', conta: '',
     parcelas: '1', impostoPercent: '0', comissaoPercent: '0',
     distribuicao: [] as { id: string; nome: string; percentual: number }[]
   });
 
-  useEffect(() => {
-    if (modalTransacao) {
-      setTimeout(() => firstInputRef.current?.focus(), 150);
-    }
-  }, [modalTransacao]);
-
-  const { data, error } = useQuery<FinanceiroData, Error, FinanceiroData, (string | number)[]>({
+  const { data: dashData, error: dashError } = useQuery<FinanceiroData, Error>({
     queryKey: ['financeiro', anoSelecionado, mesSelecionado, pagina],
     queryFn: () => financeiroService.fetchDashboardData(anoSelecionado, mesSelecionado, pagina, ITEMS_PER_PAGE),
   });
 
-  useEffect(() => {
-    if (error) {
-      reportError('Erro Financeiro', 'Não foi possível carregar os dados financeiros. Por favor, tente novamente.');
-    }
-  }, [error, reportError]);
+  const { data: contasBancarias = [] } = useQuery({
+    queryKey: ['contas_bancarias'],
+    queryFn: () => financeiroService.fetchContasBancarias(),
+  });
 
-  const { transacoes = [], contratos = [], colaboradores = [] } = data || {};
+  const { mutate: adicionarBanco, isPending: criandoBanco } = useMutation({
+    mutationFn: () => financeiroService.salvarContaBancaria(novoBancoForm.nome, novoBancoForm.tipo, escritorioId!),
+    onSuccess: () => { toast.success('Banco cadastrado!'); queryClient.invalidateQueries({ queryKey: ['contas_bancarias'] }); setNovoBancoForm({ nome: '', tipo: 'digital' }); },
+    onError: (err: Error) => toast.error(err.message)
+  });
 
-  const carregarTransacoes = async () => {
-    await queryClient.invalidateQueries({ queryKey: ['financeiro', anoSelecionado, mesSelecionado, pagina] });
-  };
+  const { mutate: excluirBanco } = useMutation({
+    mutationFn: (id: string) => financeiroService.excluirContaBancaria(id),
+    onSuccess: () => { toast.success('Removido.'); queryClient.invalidateQueries({ queryKey: ['contas_bancarias'] }); },
+    onError: (err: Error) => toast.error(err.message)
+  });
+
+  const { transacoes = [], contratos = [] } = dashData || {};
+
+  useEffect(() => { if (dashError) reportError('Erro Financeiro', dashError.message); }, [dashError, reportError]);
+  useEffect(() => { if (contasBancarias.length > 0 && !formTrans.conta) setFormTrans(prev => ({ ...prev, conta: contasBancarias[0].id })); }, [contasBancarias, formTrans.conta]);
+  useEffect(() => { if (modalTransacao) setTimeout(() => firstInputRef.current?.focus(), 150); }, [modalTransacao]);
 
   const parseCurrency = (val: string): number => {
     if (!val) return 0;
@@ -94,78 +99,30 @@ export default function FinanceiroPage() {
   };
 
   const getSaldoConta = (contaId: string) => {
-    return transacoes
-      .filter(t => t.conta === contaId && t.concretizado)
-      .reduce((sum, t) => sum + (t.tipo === 'receita' ? t.valor : -t.valor), 0);
+    return transacoes.filter(t => t.conta === contaId && t.concretizado).reduce((sum, t) => sum + (t.tipo === 'receita' ? t.valor : -t.valor), 0);
   };
 
   const { mutate: salvarTransacao, isPending: isSaving } = useMutation({
-    mutationFn: () => financeiroService.salvarTransacao({ formTrans, tipoTransacao, editandoTransacao, contratos, parseCurrency }),
+    mutationFn: () => financeiroService.salvarTransacao({ formTrans, tipoTransacao, editandoTransacao, contratos, parseCurrency, escritorioId: escritorioId! }),
     onSuccess: () => {
-      toast.success(editandoTransacao ? 'Lançamento atualizado.' : 'Lançamento(s) criados com sucesso!');
+      toast.success('Registrado!');
       queryClient.invalidateQueries({ queryKey: ['financeiro'] });
       setModalTransacao(false);
       setEditandoTransacao(null);
-      setFormTrans({ entidade: '', valor: '', data: now.toISOString().split('T')[0], status: 'pendente', concretizado: false, referencia: '', conta: 'BB', parcelas: '1', impostoPercent: '0', comissaoPercent: '0', distribuicao: [] });
+      setFormTrans({ entidade: '', valor: '', data: now.toISOString().split('T')[0], status: 'pendente', categoria: 'Outros', concretizado: false, referencia: '', conta: contasBancarias[0]?.id || '', parcelas: '1', impostoPercent: '0', comissaoPercent: '0', distribuicao: [] });
     },
-    onError: (err: Error) => reportError('Erro ao Salvar', err.message || 'Houve um problema técnico ao registrar o lançamento.'),
+    onError: (err: Error) => reportError('Erro ao Salvar', err.message),
   });
 
   const { mutate: excluirTransacao } = useMutation({
     mutationFn: (id: string) => financeiroService.excluirTransacao(id),
-    onSuccess: () => {
-      toast.success('Lançamento excluído.');
-      queryClient.invalidateQueries({ queryKey: ['financeiro'] });
-    },
-    onError: (err: Error) => reportError('Erro ao Excluir', err.message || 'Não foi possível remover o lançamento.'),
+    onSuccess: () => { toast.success('Excluído.'); queryClient.invalidateQueries({ queryKey: ['financeiro'] }); },
   });
 
   const { mutate: confirmarPagamento } = useMutation({
     mutationFn: (id: string) => financeiroService.confirmarPagamento(id, transacoes),
-    onSuccess: () => {
-      toast.success('Transação confirmada (Realizado)');
-      queryClient.invalidateQueries({ queryKey: ['financeiro'] });
-    },
-    onError: () => toast.error('Erro ao confirmar transação'),
+    onSuccess: () => { toast.success('Confirmado!'); queryClient.invalidateQueries({ queryKey: ['financeiro'] }); },
   });
-
-  const { mutate: pagarComissoesLiberadas } = useMutation({
-    mutationFn: (liberadas: Transacao[]) => financeiroService.pagarComissoesLiberadas(liberadas),
-    onSuccess: (liberadas) => {
-      toast.success(`${liberadas.length} comissões pagas com sucesso!`);
-      queryClient.invalidateQueries({ queryKey: ['financeiro'] });
-    },
-    onError: (err: Error) => reportError('Erro ao Pagar Comissões', err.message)
-  });
-
-  const handleExcluirTransacao = (id: string) => {
-    const trans = transacoes.find(t => t.id === id);
-    if (!trans) return;
-    let description = 'Esta ação não pode ser desfeita.';
-    if (transacoes.some(t => t.parent_id === id)) description = "AVISO: Impostos e comissões vinculados também serão EXCLUÍDOS.";
-    toast(`Excluir o lançamento "${trans.entidade}"?`, {
-      description,
-      action: { label: 'Confirmar Exclusão', onClick: () => excluirTransacao(id) },
-      cancel: { label: 'Cancelar', onClick: () => { } }, duration: 8000,
-    });
-  };
-
-  const handlePagarComissoesLiberadas = () => {
-    const liberadas = transacoes.filter(t => t.tipo === 'distribuicao' && !t.concretizado && transacoes.find(p => p.id === t.parent_id)?.concretizado);
-    if (liberadas.length === 0) return toast.info('Nenhuma comissão liberada para pagar.');
-    const total = liberadas.reduce((s, t) => s + t.valor, 0);
-    toast(`Pagar ${liberadas.length} comissões liberadas?`, {
-      description: `O valor total de ${formatCurrencyBR(total)} será marcado como pago.`,
-      action: { label: 'Confirmar Pagamento', onClick: () => pagarComissoesLiberadas(liberadas) },
-      cancel: { label: 'Cancelar', onClick: () => { } }, duration: 8000,
-    });
-  };
-
-  const formatarDataBR = (data: string) => {
-    if (!data) return '-';
-    const [y, m, d] = data.split('-');
-    return `${d}/${m}/${y}`;
-  };
 
   const transFiltered = useMemo(() => (transacoes || []).filter(t => {
     if (!t.data) return false;
@@ -173,21 +130,9 @@ export default function FinanceiroPage() {
     return d.getMonth() === mesSelecionado && d.getFullYear() === anoSelecionado;
   }), [transacoes, mesSelecionado, anoSelecionado]);
 
-  const totalReceitas = useMemo(() =>
-    transFiltered.filter(t => t.tipo === 'receita' && t.concretizado).reduce((s, t) => s + t.valor, 0),
-    [transFiltered]
-  );
-
-  const totalDespesas = useMemo(() =>
-    transFiltered.filter(t => t.tipo === 'despesa' && t.concretizado).reduce((s, t) => s + t.valor, 0),
-    [transFiltered]
-  );
-
-  const totalComissoes = useMemo(() =>
-    transFiltered.filter(t => t.tipo === 'distribuicao' && t.concretizado).reduce((s, t) => s + t.valor, 0),
-    [transFiltered]
-  );
-
+  const totalReceitas = useMemo(() => transFiltered.filter(t => t.tipo === 'receita' && t.concretizado).reduce((s, t) => s + t.valor, 0), [transFiltered]);
+  const totalDespesas = useMemo(() => transFiltered.filter(t => t.tipo === 'despesa' && t.concretizado).reduce((s, t) => s + t.valor, 0), [transFiltered]);
+  const totalComissoes = useMemo(() => transFiltered.filter(t => t.tipo === 'distribuicao' && t.concretizado).reduce((s, t) => s + t.valor, 0), [transFiltered]);
   const totalProjetadoMes = totalReceitas - (totalDespesas + totalComissoes);
 
   const dadosPizza = useMemo(() => [
@@ -196,314 +141,131 @@ export default function FinanceiroPage() {
     { name: 'Comissões', value: totalComissoes, color: '#3b82f6' },
   ].filter(d => d.value > 0), [totalReceitas, totalDespesas, totalComissoes]);
 
-  const blurStyle = {
-    filter: !dadosVisiveis ? 'blur(12px)' : 'none',
-    userSelect: (!dadosVisiveis ? 'none' : 'auto') as React.CSSProperties['userSelect'],
-    transition: 'filter 0.3s ease',
-    pointerEvents: (!dadosVisiveis ? 'none' : 'auto') as React.CSSProperties['pointerEvents'],
-  };
+  const blurStyle = { filter: !dadosVisiveis ? 'blur(12px)' : 'none', transition: 'filter 0.3s ease' };
 
   return (
     <div className="animate-in">
-      {/* Header */}
       <div className="page-header">
         <div>
-          <h1 className="text-3xl font-light text-white tracking-widest">
-            Overview <span className="font-bold">Financeiro</span>
-          </h1>
-          <p className="text-muted text-sm mt-1">Visão geral e gestão de fluxo de caixa.</p>
+          <h1 className="text-3xl font-light text-white tracking-widest">Finan<span className="font-bold">ceiro</span></h1>
+          <p className="text-muted text-sm mt-1">Gestão de caixa estratégica por categorias jurídicas.</p>
         </div>
-        <div className="flex flex-col gap-3 items-end">
-          <div className="flex gap-3 items-center">
-            <button onClick={() => {
-              if (mesSelecionado === 0) {
-                setMesSelecionado(11);
-                setAnoSelecionado(a => a - 1);
-              } else {
-                setMesSelecionado(m => m - 1);
-              }
-            }} className="btn-icon text-white"><ChevronLeft size={20} /></button>
-            <div className="glass-panel px-4 py-2 text-white font-semibold text-sm min-w-[150px] text-center">{MESES[mesSelecionado]} {anoSelecionado}</div>
-            <button onClick={() => {
-              if (mesSelecionado === 11) {
-                setMesSelecionado(0);
-                setAnoSelecionado(a => a + 1);
-              } else {
-                setMesSelecionado(m => m + 1);
-              }
-            }} className="btn-icon text-white"><ChevronRight size={20} /></button>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={() => carregarTransacoes()} className="btn-outline">
-              <RefreshCw size={16} /> Atualizar
-            </button>
-            <button onClick={() => setDadosVisiveis(!dadosVisiveis)} className="btn-outline">
-              {dadosVisiveis ? <Eye size={16} /> : <EyeOff size={16} />}
-              {dadosVisiveis ? 'Ocultar' : 'Mostrar'}
-            </button>
-          </div>
+        <div className="flex gap-3 h-fit items-center">
+            <button onClick={() => setDadosVisiveis(!dadosVisiveis)} className="btn-outline">{dadosVisiveis ? <Eye size={16} /> : <EyeOff size={16} />}</button>
+            <div className="flex gap-2 items-center glass-panel p-2">
+                <button onClick={() => setMesSelecionado(m => m === 0 ? 11 : m - 1)} className="btn-icon text-white"><ChevronLeft size={16} /></button>
+                <span className="text-xs text-white font-bold min-w-[100px] text-center">{MESES[mesSelecionado]} {anoSelecionado}</span>
+                <button onClick={() => setMesSelecionado(m => m === 11 ? 0 : m + 1)} className="btn-icon text-white"><ChevronRight size={16} /></button>
+            </div>
+            <button onClick={() => { setTipoTransacao('receita'); setFormTrans({...formTrans, categoria: 'Honorários Contratuais'}); setModalTransacao(true); }} className="btn-primary"><Plus size={18} /> Novo Lançamento</button>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-2 mb-8 overflow-x-auto pb-2">
-        {[
-          { id: 'resumo', label: 'Resumo', icon: <PieChartIcon size={16} /> },
-          { id: 'receitas', label: 'Receitas', icon: <ArrowUpRight size={16} /> },
-          { id: 'despesas', label: 'Despesas', icon: <ArrowDownRight size={16} /> },
-          { id: 'pendentes', label: 'Pendentes', icon: <CheckCircle2 size={16} /> }
-        ].map(t => (
-          <button
-            key={t.id}
-            onClick={() => setActiveTab(t.id as FinanceiroTab)}
-            className={activeTab === t.id ? 'btn-primary' : 'btn-outline'}
-          >
-            {t.icon} {t.label}
-          </button>
-        ))}
-      </div>
+      {isMaster ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <div className="glass-panel p-5 text-center border-b-2 border-green-500/30" style={blurStyle}><p className="text-[10px] text-muted uppercase mb-1">Receitas</p><p className="text-2xl font-bold text-white">{formatCurrencyBR(totalReceitas)}</p></div>
+            <div className="glass-panel p-5 text-center border-b-2 border-yellow-500/30" style={blurStyle}><p className="text-[10px] text-muted uppercase mb-1">Despesas</p><p className="text-2xl font-bold text-white">{formatCurrencyBR(totalDespesas)}</p></div>
+            <div className="glass-panel p-5 text-center border-b-2 border-blue-500/30" style={blurStyle}><p className="text-[10px] text-muted uppercase mb-1">Comissões</p><p className="text-2xl font-bold text-white">{formatCurrencyBR(totalComissoes)}</p></div>
+            <div className="glass-panel p-5 text-center border-b-2 border-white/30" style={blurStyle}><p className="text-[10px] text-muted uppercase mb-1">Lucro Líquido</p><p className="text-2xl font-bold text-white">{formatCurrencyBR(totalProjetadoMes)}</p></div>
+        </div>
+      ) : (
+        <div className="glass-panel p-6 mb-8 border-l-4 border-blue-500 bg-blue-500/5">
+          <h3 className="text-white font-bold mb-1">Visão de Colaborador Ativa</h3>
+          <p className="text-muted text-sm">Você tem acesso apenas às suas participações e transações vinculadas. O financeiro geral é restrito à diretoria.</p>
+        </div>
+      )}
 
-      {/* Content */}
-      <AnimatePresence mode="wait">
-        {activeTab === 'resumo' && (
-          <motion.div key="resumo" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            {/* Summary Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-              <div className="glass-panel p-5" style={blurStyle}>
-                <div className="flex items-center gap-2 mb-2">
-                  <ArrowUpRight size={14} className="text-green-400" />
-                  <span className="text-muted text-xs uppercase tracking-widest">Receitas</span>
-                </div>
-                <span className="text-2xl font-bold text-green-400">{formatCurrencyBR(totalReceitas)}</span>
-              </div>
-              <div className="glass-panel p-5" style={blurStyle}>
-                <div className="flex items-center gap-2 mb-2">
-                  <ArrowDownRight size={14} className="text-yellow-400" />
-                  <span className="text-muted text-xs uppercase tracking-widest">Despesas</span>
-                </div>
-                <span className="text-2xl font-bold text-yellow-400">{formatCurrencyBR(totalDespesas)}</span>
-              </div>
-              <div className="glass-panel p-5" style={blurStyle}>
-                <div className="flex items-center gap-2 mb-2">
-                  <DollarSign size={14} className="text-blue-400" />
-                  <span className="text-muted text-xs uppercase tracking-widest">Comissões</span>
-                </div>
-                <span className="text-2xl font-bold text-blue-400">{formatCurrencyBR(totalComissoes)}</span>
-              </div>
-              <div className="glass-panel p-5 border-white/10" style={blurStyle}>
-                <div className="flex items-center gap-2 mb-2">
-                  <DollarSign size={14} className="text-white" />
-                  <span className="text-muted text-xs uppercase tracking-widest">Líquido</span>
-                </div>
-                <span className={`text-2xl font-bold ${totalProjetadoMes >= 0 ? 'text-white' : 'text-red-400'}`}>
-                  {formatCurrencyBR(totalProjetadoMes)}
-                </span>
-              </div>
+      {isMaster && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+            <div className="glass-panel p-6 lg:col-span-2">
+                <h3 className="text-serif text-white mb-4">Análise Fiscal</h3>
+                <div className="h-[200px]"><ResponsiveContainer><PieChart><Pie data={dadosPizza} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value" stroke="none">{dadosPizza.map((e, i) => <Cell key={i} fill={e.color} />)}</Pie><RechartsTooltip formatter={(v) => formatCurrencyBR(Number(v))} contentStyle={{ background: '#111', border: '1px solid #333' }} /></PieChart></ResponsiveContainer></div>
             </div>
-
-            {/* Chart + Balance */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="glass-panel p-6 lg:col-span-2">
-                <div className="flex justify-between items-start mb-4">
-                  <div>
-                    <h3 className="text-serif text-lg text-white mb-1">Balanço Mensal</h3>
-                    <p className="text-muted text-sm">Proporção de entradas e saídas</p>
-                  </div>
-                </div>
-                <div className="flex items-center flex-wrap gap-4">
-                  <div className="flex-1 min-w-[200px] h-[220px]">
-                    {dadosPizza.length > 0 ? (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie data={dadosPizza} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value" stroke="none">
-                            {dadosPizza.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
-                          </Pie>
-                          <RechartsTooltip
-                            formatter={(value) => `R$ ${Number(value).toLocaleString('pt-BR')}`}
-                            contentStyle={{ background: '#111', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', color: '#fff' }}
-                          />
-                        </PieChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      <div className="flex items-center justify-center h-40 w-40 border-2 border-dashed border-white/10 rounded-full mx-auto">
-                        <p className="text-muted text-xs">Sem dados</p>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-[200px] flex flex-col gap-3 pl-6" style={blurStyle}>
-                    <div>
-                      <p className="text-muted text-xs mb-0.5">Receitas</p>
-                      <h3 className="text-lg font-bold text-green-400">{formatCurrencyBR(totalReceitas)}</h3>
-                    </div>
-                    <div>
-                      <p className="text-muted text-xs mb-0.5">Despesas</p>
-                      <h3 className="text-lg font-bold text-yellow-400">{formatCurrencyBR(totalDespesas)}</h3>
-                    </div>
-                    <div>
-                      <p className="text-muted text-xs mb-0.5">Comissões</p>
-                      <h3 className="text-lg font-bold text-blue-400">{formatCurrencyBR(totalComissoes)}</h3>
-                    </div>
-                    <div className="pt-3 border-t border-white/5">
-                      <p className="text-muted text-xs mb-0.5">Líquido Projetado (Mês)</p>
-                      <h2 className={`text-xl font-bold ${totalProjetadoMes >= 0 ? 'text-white' : 'text-red-400'}`}>
-                        {formatCurrencyBR(totalProjetadoMes)}
-                      </h2>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="glass-panel p-6">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-serif text-lg text-white">Saldos por Conta</h3>
-                  <span className="text-xs text-muted">Até {MESES[mesSelecionado]}</span>
-                </div>
-                <div style={blurStyle}>
-                  {CONTAS.map(conta => (
-                    <div key={conta.id} className="flex items-center justify-between py-3 border-b border-white/5 last:border-0">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-white/60">{conta.icone}</div>
-                        <span className="text-sm text-white/80">{conta.nome}</span>
-                      </div>
-                      <strong className="text-sm text-white">{formatCurrencyBR(getSaldoConta(conta.id))}</strong>
-                    </div>
-                  ))}
-                </div>
-              </div>
+            <div className="glass-panel p-6">
+                <div className="flex justify-between items-center mb-4"><h3 className="text-serif text-white">Contas</h3><button onClick={() => setModalBancos(true)} className="text-[10px] text-secondary font-bold">Gerenciar</button></div>
+                <div className="space-y-3">{contasBancarias.map((b: any) => <div key={b.id} className="flex justify-between items-center text-sm"><div className="flex items-center gap-2 text-white/60">{CONTAS_DEFAULT_ICONS[b.tipo]} <span>{b.nome}</span></div><span className="text-white font-bold" style={blurStyle}>{formatCurrencyBR(getSaldoConta(b.id))}</span></div>)}</div>
             </div>
+        </div>
+      )}
 
-            {/* Transaction Table */}
-            <div className="glass-panel mt-6 overflow-hidden">
-              <div className="p-4 flex justify-between items-center border-b border-white/5">
-                <h3 className="text-serif text-white">Movimentações do Mês</h3>
-                <button onClick={() => setModalTransacao(true)} className="btn-primary text-sm">
-                  <Plus size={16} /> Novo Lançamento
-                </button>
-              </div>
-              <table className="dark-table">
-                <thead>
-                  <tr>
-                    <th>Data</th>
-                    <th>Descrição</th>
-                    <th>Tipo</th>
-                    <th>Status</th>
-                    <th style={{ textAlign: 'right' }}>Valor</th>
-                    <th style={{ width: 80 }}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {transFiltered.length === 0 ? (
-                    <tr><td colSpan={6} className="text-center py-12 text-muted">Nenhuma movimentação neste período.</td></tr>
-                  ) : (
-                    transFiltered.map(t => (
+      <div className="glass-panel overflow-hidden">
+          <table className="dark-table">
+              <thead><tr><th>Data</th><th>Classificação</th><th>Entidade</th><th>Status</th><th style={{ textAlign: 'right' }}>Valor</th><th></th></tr></thead>
+              <tbody>
+                  {transFiltered.map(t => (
                       <tr key={t.id}>
-                        <td>{formatarDataBR(t.data)}</td>
-                        <td className="font-medium text-white">{t.entidade}</td>
-                        <td>
-                          <span className={`badge ${t.tipo === 'receita' ? 'badge-success' : t.tipo === 'despesa' ? 'badge-warning' : 'badge-neutral'}`}>
-                            {t.tipo === 'receita' ? 'Receita' : t.tipo === 'despesa' ? 'Despesa' : 'Comissão'}
-                          </span>
-                        </td>
-                        <td>
-                          <span className={t.concretizado ? 'text-green-400' : 'text-white/40'}>
-                            {t.concretizado ? '● Realizado' : '○ Previsto'}
-                          </span>
-                        </td>
-                        <td style={{ textAlign: 'right' }}>
-                          <span className={`font-semibold ${t.tipo === 'receita' ? 'text-green-400' : 'text-white/70'}`} style={blurStyle}>
-                            {formatCurrencyBR(t.valor)}
-                          </span>
-                        </td>
-                        <td>
-                          <div className="flex gap-1 justify-center">
-                            {!t.concretizado && (
-                              <button className="btn-icon text-green-400" onClick={() => confirmarPagamento(t.id)} title="Confirmar">
-                                <CheckCircle2 size={16} />
-                              </button>
-                            )}
-                            <button className="btn-icon text-red-400" onClick={() => handleExcluirTransacao(t.id)} title="Excluir">
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        </td>
+                          <td>{new Date(t.data).toLocaleDateString('pt-BR')}</td>
+                          <td><div className="flex items-center gap-2"><Tag size={12} className="text-secondary" /><span className="text-xs text-white/70">{t.categoria || 'Outros'}</span></div></td>
+                          <td className="text-white font-medium">{t.entidade}</td>
+                          <td><span className={t.concretizado ? 'text-green-400 text-xs' : 'text-white/20 text-xs'}>{t.concretizado ? 'Efetivado' : 'Previsto'}</span></td>
+                          <td style={blurStyle} className="font-bold text-white text-right">{formatCurrencyBR(t.valor)}</td>
+                          <td style={{ textAlign: 'right' }}>
+                              <div className="flex gap-2 justify-end">
+                                  {!t.concretizado && <button onClick={() => confirmarPagamento(t.id)} className="text-green-400"><CheckCircle2 size={16} /></button>}
+                                  <button onClick={() => excluirTransacao(t.id)} className="text-white/20 hover:text-red-400"><Trash2 size={16} /></button>
+                              </div>
+                          </td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </motion.div>
-        )}
-
-        {activeTab === 'receitas' && (
-          <motion.div key="receitas" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <div className="glass-panel overflow-hidden">
-              <table className="dark-table">
-                <thead><tr><th>Data</th><th>Entidade</th><th>Status</th><th style={{ textAlign: 'right' }}>Valor</th></tr></thead>
-                <tbody>
-                  {transFiltered.filter(t => t.tipo === 'receita').map(t => (
-                    <tr key={t.id}>
-                      <td>{formatarDataBR(t.data)}</td>
-                      <td className="font-medium text-white">{t.entidade}</td>
-                      <td><span className={t.concretizado ? 'text-green-400' : 'text-white/40'}>{t.concretizado ? '● Recebido' : '○ Pendente'}</span></td>
-                      <td style={{ textAlign: 'right' }} className="font-semibold text-green-400">{formatCurrencyBR(t.valor)}</td>
-                    </tr>
                   ))}
-                  {transFiltered.filter(t => t.tipo === 'receita').length === 0 && (
-                    <tr><td colSpan={4} className="text-center py-12 text-muted">Nenhuma receita registrada.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </motion.div>
-        )}
+              </tbody>
+          </table>
+      </div>
 
-        {activeTab === 'despesas' && (
-          <motion.div key="despesas" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <div className="glass-panel overflow-hidden">
-              <table className="dark-table">
-                <thead><tr><th>Data</th><th>Entidade</th><th>Status</th><th style={{ textAlign: 'right' }}>Valor</th></tr></thead>
-                <tbody>
-                  {transFiltered.filter(t => t.tipo !== 'receita').map(t => (
-                    <tr key={t.id}>
-                      <td>{formatarDataBR(t.data)}</td>
-                      <td className="font-medium text-white">{t.entidade}</td>
-                      <td><span className={t.concretizado ? 'text-yellow-400' : 'text-white/40'}>{t.concretizado ? '● Pago' : '○ Pendente'}</span></td>
-                      <td style={{ textAlign: 'right' }} className="font-semibold text-yellow-400">{formatCurrencyBR(t.valor)}</td>
-                    </tr>
-                  ))}
-                  {transFiltered.filter(t => t.tipo !== 'receita').length === 0 && (
-                    <tr><td colSpan={4} className="text-center py-12 text-muted">Nenhuma despesa registrada.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </motion.div>
+      {/* Modal Lançamento */}
+      <AnimatePresence>
+        {modalTransacao && (
+          <div className="modal-overlay">
+            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="modal-content glass-panel w-full max-w-xl p-8">
+              <div className="flex justify-between items-center mb-8">
+                <h3 className="text-xl text-white font-serif uppercase tracking-widest">{tipoTransacao}</h3>
+                <button onClick={() => setModalTransacao(false)}><X size={20} className="text-white/40" /></button>
+              </div>
+              <div className="flex gap-2 mb-6 p-1 bg-white/5 rounded-lg">
+                  <button onClick={() => { setTipoTransacao('receita'); setFormTrans({...formTrans, categoria: 'Honorários Contratuais'}); }} className={tipoTransacao === 'receita' ? 'flex-1 btn-primary py-2 text-xs' : 'flex-1 text-white/40 py-2 text-xs'}>Receita</button>
+                  <button onClick={() => { setTipoTransacao('despesa'); setFormTrans({...formTrans, categoria: 'Custas Processuais'}); }} className={tipoTransacao === 'despesa' ? 'flex-1 btn-primary py-2 text-xs' : 'flex-1 text-white/40 py-2 text-xs'}>Despesa</button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="input-group"><label>Descrição / Cliente</label><input ref={firstInputRef} className="dark-input" value={formTrans.entidade} onChange={e => setFormTrans({...formTrans, entidade: e.target.value})} /></div>
+                  <div className="input-group"><label>Categoria</label>
+                    <select className="dark-select" value={formTrans.categoria} onChange={e => setFormTrans({...formTrans, categoria: e.target.value})}>
+                        {(tipoTransacao === 'receita' ? CATEGORIAS_RECEITA : CATEGORIAS_DESPESA).map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div className="input-group"><label>Valor R$</label><input className="dark-input font-bold" value={formTrans.valor} onChange={e => setFormTrans({...formTrans, valor: e.target.value})} /></div>
+                  <div className="input-group"><label>Data</label><input type="date" className="dark-input text-xs" value={formTrans.data} onChange={e => setFormTrans({...formTrans, data: e.target.value})} /></div>
+                  <div className="input-group"><label>Conta Bancária</label>
+                    <select className="dark-select" value={formTrans.conta} onChange={e => setFormTrans({...formTrans, conta: e.target.value})}>
+                        {contasBancarias.map((b: any) => <option key={b.id} value={b.id}>{b.nome}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2 pt-6">
+                    <input type="checkbox" id="efet" checked={formTrans.concretizado} onChange={e => setFormTrans({...formTrans, concretizado: e.target.checked, status: e.target.checked ? (tipoTransacao === 'receita' ? 'recebido' : 'pago') : 'pendente'})} className="w-5 h-5 accent-secondary" />
+                    <label htmlFor="efet" className="text-xs text-white/60 cursor-pointer">Lançamento Efetivado?</label>
+                  </div>
+              </div>
+              <div className="flex justify-end gap-3 mt-8 pt-6 border-t border-white/5">
+                  <button onClick={() => setModalTransacao(false)} className="btn-outline px-6">Cancelar</button>
+                  <button onClick={() => salvarTransacao()} disabled={isSaving || !formTrans.entidade || !formTrans.valor} className="btn-primary px-10">{isSaving ? 'Gravando...' : 'Confirmar'}</button>
+              </div>
+            </motion.div>
+          </div>
         )}
+      </AnimatePresence>
 
-        {activeTab === 'pendentes' && (
-          <motion.div key="pendentes" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <div className="glass-panel overflow-hidden">
-              <table className="dark-table">
-                <thead><tr><th>Data</th><th>Entidade</th><th>Tipo</th><th style={{ textAlign: 'right' }}>Valor</th><th></th></tr></thead>
-                <tbody>
-                  {transFiltered.filter(t => !t.concretizado).map(t => (
-                    <tr key={t.id}>
-                      <td>{formatarDataBR(t.data)}</td>
-                      <td className="font-medium text-white">{t.entidade}</td>
-                      <td><span className={`badge ${t.tipo === 'receita' ? 'badge-success' : 'badge-warning'}`}>{t.tipo}</span></td>
-                      <td style={{ textAlign: 'right' }} className="font-semibold">{formatCurrencyBR(t.valor)}</td>
-                      <td><button className="btn-icon text-green-400" onClick={() => confirmarPagamento(t.id)}><CheckCircle2 size={16} /></button></td>
-                    </tr>
-                  ))}
-                  {transFiltered.filter(t => !t.concretizado).length === 0 && (
-                    <tr><td colSpan={5} className="text-center py-12 text-muted">Nenhuma transação pendente.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </motion.div>
-        )}
+      {/* Modal Bancos Simples */}
+      <AnimatePresence>
+          {modalBancos && (
+              <div className="modal-overlay">
+                  <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="modal-content glass-panel w-full max-w-sm p-6">
+                      <div className="flex justify-between items-center mb-6"><h3 className="text-white">Gerenciar Bancos</h3><button onClick={() => setModalBancos(false)}><X size={18} /></button></div>
+                      <div className="flex gap-2 mb-4">
+                          <input className="dark-input text-xs flex-1" placeholder="Nome do banco..." value={novoBancoForm.nome} onChange={e => setNovoBancoForm({...novoBancoForm, nome: e.target.value})} />
+                          <button onClick={() => adicionarBanco()} className="btn-primary p-2"><Plus size={16} /></button>
+                      </div>
+                      <div className="space-y-2">{contasBancarias.map((b: any) => <div key={b.id} className="flex justify-between items-center p-2 bg-white/5 rounded"><span className="text-xs text-white">{b.nome}</span><button onClick={() => excluirBanco(b.id)}><Trash2 size={12} className="text-red-400" /></button></div>)}</div>
+                  </motion.div>
+              </div>
+          )}
       </AnimatePresence>
     </div>
   );

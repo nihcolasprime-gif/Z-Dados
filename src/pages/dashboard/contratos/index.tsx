@@ -1,18 +1,26 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Search, ChevronRight, Trash2, Edit2, RefreshCw, X, FileText } from 'lucide-react';
-import { parseCurrencyToNumber } from '../../../utils/format';
-import { addMonths } from 'date-fns';
+import { 
+  Plus, Search, ChevronRight, Trash2, Edit2, RefreshCw, X, FileText, 
+  Gavel, Download, UploadCloud
+} from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
 import { toast } from 'sonner';
+import { tarefaService, Tarefa as ITarefa } from '../../../services/tarefaService';
+import { financeiroService } from '../../../services/financeiroService';
+import { useAuth } from '../../../contexts/AuthContext';
 import { generateTransactionsForContract } from '../../../lib/transactionsManager';
 import { generateContratoHTML, generateProcuracaoHTML } from '../../../services/documentGenerator';
+import { arquivoService, ArquivoVault } from '../../../services/arquivoService';
 
 interface ColaboradorDistribuicao { id: string; nome: string; percentual: number; }
 
 interface Contrato {
   id: string; numero: string; cliente_id: string; cliente_nome: string;
-  valor_total: number; status: 'ativo' | 'concluido' | 'suspenso' | 'inadimplente';
+  valor_total: number; valor_causa?: number; natureza?: string;
+  tribunal?: string; vara?: string;
+  status: 'ativo' | 'concluido' | 'suspenso' | 'inadimplente';
   data_inicio: string; data_fim?: string; finalidade?: string;
   forma_pagamento?: string; qtd_parcelas?: number; valor_entrada?: number;
   banco_entrada?: string; colaboradores_distribuicao?: ColaboradorDistribuicao[];
@@ -23,30 +31,44 @@ interface Parcela {
   valor: number; status: 'pendente' | 'pago' | 'atrasado';
 }
 
+const NATUREZAS = [
+  'Trabalhista Reclamante', 'Trabalhista Reclamada', 'Cível', 'Previdenciário',
+  'Família', 'Empresarial', 'Tributário', 'Administrativo', 'Outro'
+];
+
 export default function ContratosPage() {
+  const { escritorioId } = useAuth();
+  const location = useLocation();
+  const [bancos, setBancos] = useState<any[]>([]);
   const [contratos, setContratos] = useState<Contrato[]>([]);
   const [busca, setBusca] = useState('');
-  const [filtroStatus, setFiltroStatus] = useState<string>('todos');
-  const [clientes, setClientes] = useState<{ id: string, nome: string }[]>([]);
-  const [staff, setStaff] = useState<{ id: string, nome: string }[]>([]);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [parcelas, setParcelas] = useState<Parcela[]>([]);
-  const [loadingParcelas, setLoadingParcelas] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [activeSubTab, setActiveSubTab] = useState<'pagamentos' | 'prazos' | 'arquivos'>('pagamentos');
   const [modalNovo, setModalNovo] = useState(false);
   const [editandoId, setEditandoId] = useState<string | null>(null);
 
   const [form, setForm] = useState({
-    cliente_id: '', numero: '', finalidade: '',
+    cliente_id: '', numero: '', finalidade: '', natureza: 'Cível',
+    valor_causa: '', tribunal: '', vara: '',
     data_inicio: new Date().toISOString().split('T')[0], data_fim: '',
     data_entrada: new Date().toISOString().split('T')[0],
-    data_primeira_parcela: addMonths(new Date(), 1).toISOString().split('T')[0],
+    data_primeira_parcela: new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString().split('T')[0],
     valor_total: '', forma_pagamento: 'a_vista',
     tem_entrada: false, valor_entrada: '', qtd_parcelas: '1',
-    meio_pagamento: 'pix', local_pagamento: 'bb',
+    meio_pagamento: 'pix', local_pagamento: '',
     imposto_percent: '5',
     distribuicao: [] as { id: string, nome: string, percentual: number }[]
   });
+
+  const [clientes, setClientes] = useState<{ id: string, nome: string }[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [parcelas, setParcelas] = useState<Parcela[]>([]);
+  const [tarefas, setTarefas] = useState<ITarefa[]>([]);
+  const [arquivos, setArquivos] = useState<ArquivoVault[]>([]);
+  const [loadingTarefas, setLoadingTarefas] = useState(false);
+  const [loadingArquivos, setLoadingArquivos] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
+  const [novaTarefaForm, setNovaTarefaForm] = useState({ titulo: '', data: '', prioridade: 'media' as any });
 
   const applyMask = (value: string) => {
     const cleanValue = value.replace(/\D/g, "");
@@ -54,375 +76,356 @@ export default function ContratosPage() {
     return new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2 }).format(parseFloat(cleanValue) / 100);
   };
 
+  const parseCurrency = (val: string): number => {
+    if (!val) return 0;
+    const clean = val.replace(/\./g, '').replace(',', '.');
+    return parseFloat(clean) || 0;
+  };
+
   const carregarDados = useCallback(async () => {
     try {
-      const { data: cData } = await supabase.from('clientes').select('*').order('nome');
-      if (cData) setClientes(cData);
-      const { data: sData } = await supabase.from('colaboradores').select('id, nome').order('nome');
-      if (sData) setStaff(sData);
+      const [cData, bData] = await Promise.all([
+        supabase.from('clientes').select('*').order('nome'),
+        financeiroService.fetchContasBancarias()
+      ]);
+      if (cData.data) setClientes(cData.data);
+      if (bData) setBancos(bData);
     } catch (e) { console.error(e); }
   }, []);
 
   const carregarContratos = useCallback(async () => {
-    setLoading(true);
     try {
-      const { data, error } = await supabase.from('processos')
-        .select('id, numero, cliente_id, cliente_nome, valor_total, status, data_inicio, data_fim, finalidade, forma_pagamento, qtd_parcelas')
-        .order('data_inicio', { ascending: false });
+      const { data, error } = await supabase.from('processos').select('*').order('data_inicio', { ascending: false });
       if (error) throw error;
       setContratos(data || []);
     } catch (error: any) {
-      toast.error('Falha ao carregar contratos: ' + error.message);
-    } finally { setLoading(false); }
+      toast.error('Erro ao carregar processos: ' + error.message);
+    }
   }, []);
 
-  useEffect(() => { carregarContratos(); carregarDados(); }, [carregarContratos, carregarDados]);
+  useEffect(() => { 
+    if (escritorioId) {
+      carregarContratos(); 
+      carregarDados(); 
+    }
+  }, [carregarContratos, carregarDados, escritorioId]);
 
-  const toggleExpand = async (id: string) => {
-    if (expandedId === id) { setExpandedId(null); setParcelas([]); return; }
-    setExpandedId(id); setLoadingParcelas(true);
+  useEffect(() => {
+    if (location.state?.lead && modalNovo) {
+      const lead = location.state.lead;
+      setForm(prev => ({
+        ...prev,
+        finalidade: lead.descricao || '',
+        valor_total: lead.valor_proposto ? applyMask((lead.valor_proposto * 100).toString()) : '',
+        numero: `LEAD-${lead.id.substring(0,4)}`
+      }));
+    }
+  }, [location.state, modalNovo]);
+
+  const carregarParcelas = async (id: string) => {
     try {
       const { data, error } = await supabase.from('parcelas_pagamento').select('*').eq('contrato_id', id).order('data_prevista', { ascending: true });
       if (error) throw error;
       setParcelas(data || []);
-    } catch (error: any) { toast.error('Erro: ' + error.message); }
-    finally { setLoadingParcelas(false); }
+    } catch (e: any) { toast.error(e.message); }
   };
 
-  const marcarComoPago = async (parcelaId: string) => {
+  const carregarTarefas = async (id: string) => {
+    setLoadingTarefas(true);
     try {
-      const hoje = new Date().toISOString().split('T')[0];
-      await supabase.from('transacoes').update({ status: 'pago', concretizado: true, data_pagamento: hoje }).eq('parcela_origem_id', parcelaId);
-      await supabase.from('parcelas_pagamento').update({ status: 'pago', data_pagamento: hoje }).eq('id', parcelaId);
-      toast.success('Parcela marcada como paga!');
-      setParcelas(parcelas.map(p => p.id === parcelaId ? { ...p, status: 'pago', data_pagamento: hoje } : p));
-      carregarContratos();
-    } catch (error: any) { toast.error('Erro: ' + error.message); }
+      const data = await tarefaService.fetchTarefas({ vinculo_id: id, vinculo_tipo: 'processo' });
+      setTarefas(data);
+    } catch (e: any) { toast.error(e.message); }
+    finally { setLoadingTarefas(false); }
   };
 
-  const handleExcluirContrato = async (id: string, numero: string) => {
-    if (!confirm(`Excluir o contrato #${numero}? Parcelas e transações serão removidas.`)) return;
+  const carregarArquivos = async (id: string) => {
+    setLoadingArquivos(true);
     try {
-      await supabase.from('transacoes').delete().like('referencia', `${numero}%`);
-      const { error } = await supabase.from('processos').delete().eq('id', id);
-      if (error) throw error;
-      toast.success('Contrato excluído!'); carregarContratos();
-    } catch (error: any) { toast.error('Erro: ' + error.message); }
+      const data = await arquivoService.listarArquivos(id);
+      setArquivos(data);
+    } catch (e: any) { toast.error(e.message); }
+    finally { setLoadingArquivos(false); }
   };
 
-  const handleEditarContrato = async (contrato: Contrato) => {
+  const toggleExpand = async (id: string) => {
+    if (expandedId === id) { setExpandedId(null); setParcelas([]); setTarefas([]); setArquivos([]); return; }
+    setExpandedId(id); setActiveSubTab('pagamentos');
+    carregarParcelas(id);
+    carregarTarefas(id);
+    carregarArquivos(id);
+  };
+
+  const handleUploadArquivo = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !expandedId || !escritorioId) return;
+    setUploading(true);
     try {
-      const { data: cFull } = await supabase.from('processos').select('*').eq('id', contrato.id).single();
-      if (!cFull) throw new Error('Contrato não encontrado.');
-      setForm({
-        cliente_id: cFull.cliente_id, numero: cFull.numero, finalidade: cFull.finalidade || '',
-        data_inicio: cFull.data_inicio, data_fim: cFull.data_fim || '',
-        data_entrada: (cFull as any).data_entrada || cFull.data_inicio,
-        data_primeira_parcela: (cFull as any).data_primeira_parcela || addMonths(new Date(cFull.data_inicio), 1).toISOString().split('T')[0],
-        valor_total: applyMask((cFull.valor_total * 100).toString()),
-        forma_pagamento: cFull.forma_pagamento || 'a_vista',
-        tem_entrada: (cFull as any).tem_entrada || false,
-        valor_entrada: (cFull as any).valor_entrada ? applyMask(((cFull as any).valor_entrada * 100).toString()) : '',
-        qtd_parcelas: (cFull.qtd_parcelas || 1).toString(),
-        meio_pagamento: (cFull as any).meio_pagamento || 'pix',
-        local_pagamento: cFull.banco_entrada || 'bb',
-        imposto_percent: ((cFull as any).imposto_percentual || 5).toString(),
-        distribuicao: cFull.colaboradores_distribuicao || []
+      await arquivoService.uploadArquivo(file, expandedId, 'processo', escritorioId);
+      toast.success('Arquivo anexado!');
+      carregarArquivos(expandedId);
+    } catch (err: any) { toast.error(err.message); }
+    finally { setUploading(false); }
+  };
+
+  const handleExcluirArquivo = async (id: string, url: string) => {
+    if (!confirm('Excluir este documento?') || !expandedId) return;
+    try {
+      await arquivoService.excluirArquivo(id, url);
+      toast.success('Removido.');
+      carregarArquivos(expandedId);
+    } catch (err: any) { toast.error(err.message); }
+  };
+
+  const handleCriarTarefa = async () => {
+    if (!novaTarefaForm.titulo || !expandedId) return;
+    try {
+      await tarefaService.salvarTarefa({
+        titulo: novaTarefaForm.titulo,
+        data_prazo: novaTarefaForm.data || null,
+        prioridade: novaTarefaForm.prioridade,
+        status: 'pendente',
+        vinculo_id: expandedId,
+        vinculo_tipo: 'processo'
       });
-      setEditandoId(cFull.id); setModalNovo(true);
-    } catch (e: any) { toast.error('Erro: ' + e.message); }
-  };
-
-  const gerarPDF = async (contrato: Contrato) => {
-    try {
-      const { data: cliente, error } = await supabase.from('clientes').select('*').eq('id', contrato.cliente_id).single();
-      if (error || !cliente) { toast.error('Dados do cliente não encontrados.'); return; }
-      const html = generateContratoHTML(cliente as any, { numero: contrato.numero, valor_total: contrato.valor_total, parcelas: contrato.qtd_parcelas || 1, finalidade: contrato.finalidade });
-      const win = window.open('', '_blank');
-      if (win) { win.document.write(html); win.document.close(); }
-      toast.success('Contrato preparado!');
-    } catch (e) { toast.error('Erro ao preparar contrato.'); }
-  };
-
-  const gerarProcuracao = async (contrato: Contrato) => {
-    try {
-      const { data: cliente, error } = await supabase.from('clientes').select('*').eq('id', contrato.cliente_id).single();
-      if (error || !cliente) { toast.error('Dados do cliente não encontrados.'); return; }
-      const html = generateProcuracaoHTML(cliente as any, { numero: contrato.numero, valor_total: contrato.valor_total, parcelas: contrato.qtd_parcelas || 1, finalidade: contrato.finalidade });
-      const win = window.open('', '_blank');
-      if (win) { win.document.write(html); win.document.close(); }
-    } catch (e) { toast.error('Erro ao preparar procuração.'); }
+      toast.success('Agendado!');
+      setNovaTarefaForm({ titulo: '', data: '', prioridade: 'media' });
+      carregarTarefas(expandedId);
+    } catch (e: any) { toast.error(e.message); }
   };
 
   const handleSalvarContrato = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.cliente_id || !form.numero || !form.valor_total || !form.data_inicio) {
+    if (!form.cliente_id || !form.numero || !form.valor_total || !escritorioId) {
       toast.error('Preencha os campos obrigatórios.'); return;
     }
     try {
       const cliente = clientes.find(c => c.id === form.cliente_id);
-      const valorTotalNum = parseCurrencyToNumber(form.valor_total);
-      const valorEntradaNum = (form.forma_pagamento === 'parcelado' && form.tem_entrada) ? parseCurrencyToNumber(form.valor_entrada) : 0;
-      const parcelasCount = form.forma_pagamento === 'parcelado' ? (parseInt(form.qtd_parcelas) || 1) : 1;
-      const impostoNum = parseFloat(form.imposto_percent) || 0;
-
+      const valTotal = parseCurrency(form.valor_total);
       const payload = {
-        cliente_id: form.cliente_id, cliente_nome: cliente?.nome || '', numero: form.numero,
-        finalidade: form.finalidade, valor_total: valorTotalNum, status: 'ativo',
-        data_inicio: form.data_inicio, data_fim: form.data_fim || null,
-        forma_pagamento: form.forma_pagamento, tem_entrada: form.forma_pagamento === 'parcelado' && form.tem_entrada,
-        valor_entrada: valorEntradaNum, meio_pagamento: form.meio_pagamento,
-        banco_entrada: form.local_pagamento, imposto_percentual: impostoNum,
-        qtd_parcelas: parcelasCount, data_entrada: form.data_entrada,
-        data_primeira_parcela: form.data_primeira_parcela,
-        colaboradores_distribuicao: form.distribuicao
+        cliente_id: form.cliente_id, 
+        cliente_nome: cliente?.nome || '', 
+        numero: form.numero,
+        finalidade: form.finalidade, 
+        natureza: form.natureza,
+        valor_total: valTotal,
+        valor_causa: parseCurrency(form.valor_causa),
+        tribunal: form.tribunal, 
+        vara: form.vara,
+        status: 'ativo', 
+        data_inicio: form.data_inicio,
+        forma_pagamento: form.forma_pagamento, 
+        qtd_parcelas: parseInt(form.qtd_parcelas) || 1,
+        colaboradores_distribuicao: form.distribuicao,
+        escritorio_id: escritorioId
       };
 
-      let contratoData;
+      let contratoId = editandoId;
       if (editandoId) {
-        const { data, error } = await supabase.from('processos').update(payload).eq('id', editandoId).select().single();
-        if (error) throw error;
-        contratoData = data;
-        await supabase.from('parcelas_pagamento').delete().eq('contrato_id', editandoId);
-        await supabase.from('transacoes').delete().eq('parent_id', null).like('referencia', `${form.numero}%`);
+        await supabase.from('processos').update(payload).eq('id', editandoId);
       } else {
         const { data, error } = await supabase.from('processos').insert([payload]).select().single();
         if (error) throw error;
-        contratoData = data;
+        contratoId = data.id;
       }
 
-      // Generate installment records
-      const parcelasToInsert: any[] = [];
-      let restante = valorTotalNum;
-      if (form.forma_pagamento === 'parcelado' && form.tem_entrada && valorEntradaNum > 0) {
-        parcelasToInsert.push({ contrato_id: contratoData.id, data_prevista: form.data_entrada, valor: valorEntradaNum, status: 'pendente', indice: 0 });
-        restante -= valorEntradaNum;
+      if (!editandoId && contratoId) {
+         await generateTransactionsForContract({
+            contratoId: contratoId, 
+            numeroContrato: form.numero, 
+            clienteNome: cliente?.nome || '',
+            valorTotal: valTotal, 
+            impostoPercent: parseFloat(form.imposto_percent), 
+            colaboradores: form.distribuicao,
+            formaPagamento: form.forma_pagamento, 
+            qtdParcelas: parseInt(form.qtd_parcelas),
+            dataInicio: form.data_inicio, 
+            temEntrada: form.tem_entrada, 
+            valorEntrada: parseCurrency(form.valor_entrada),
+            meioPagamento: form.meio_pagamento, 
+            bancoEntrada: form.local_pagamento, 
+            parcelasIds: []
+         });
       }
-      if (form.forma_pagamento === 'parcelado' && parcelasCount > 0) {
-        const valorParcela = restante / parcelasCount;
-        const dataBase = new Date(form.data_primeira_parcela);
-        for (let i = 0; i < parcelasCount; i++) {
-          parcelasToInsert.push({ contrato_id: contratoData.id, data_prevista: addMonths(dataBase, i).toISOString().split('T')[0], valor: valorParcela, status: 'pendente', indice: i + 1 });
-        }
-      } else if (form.forma_pagamento === 'a_vista' && restante > 0) {
-        parcelasToInsert.push({ contrato_id: contratoData.id, data_prevista: form.data_entrada || form.data_inicio, valor: restante, status: 'pendente', indice: 1 });
-      }
-
-      let insertedParcelas: { id: string, indice: number }[] = [];
-      if (parcelasToInsert.length > 0) {
-        const { data: pData, error } = await supabase.from('parcelas_pagamento').insert(parcelasToInsert).select();
-        if (error) throw error;
-        insertedParcelas = pData || [];
-      }
-
-      await generateTransactionsForContract({
-        contratoId: contratoData.id, numeroContrato: form.numero, clienteNome: cliente?.nome || '',
-        valorTotal: valorTotalNum, impostoPercent: impostoNum, colaboradores: form.distribuicao,
-        formaPagamento: form.forma_pagamento, qtdParcelas: parcelasCount,
-        dataInicio: form.forma_pagamento === 'a_vista' ? (form.data_entrada || form.data_inicio) : form.data_primeira_parcela,
-        temEntrada: form.forma_pagamento === 'parcelado' && form.tem_entrada,
-        valorEntrada: valorEntradaNum, meioPagamento: form.meio_pagamento,
-        bancoEntrada: form.local_pagamento, parcelasIds: insertedParcelas
-      });
-
-      toast.success(editandoId ? 'Contrato atualizado!' : 'Contrato criado com sucesso!');
-      setModalNovo(false); setEditandoId(null);
-      setForm({ cliente_id: '', numero: '', finalidade: '', data_inicio: new Date().toISOString().split('T')[0], data_fim: '', data_entrada: new Date().toISOString().split('T')[0], data_primeira_parcela: addMonths(new Date(), 1).toISOString().split('T')[0], valor_total: '', forma_pagamento: 'a_vista', tem_entrada: false, valor_entrada: '', qtd_parcelas: '1', meio_pagamento: 'pix', local_pagamento: 'bb', imposto_percent: '5', distribuicao: [] });
-      carregarContratos();
-    } catch (e: any) { toast.error('Erro: ' + e.message); }
+      
+      toast.success('Sucesso!'); setModalNovo(false); carregarContratos();
+    } catch (e: any) { toast.error(e.message); }
   };
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'ativo': return <span className="badge badge-success">Ativo</span>;
-      case 'concluido': return <span className="badge badge-neutral">Encerrado</span>;
-      case 'suspenso': return <span className="badge badge-warning">Suspenso</span>;
-      case 'inadimplente': return <span className="badge badge-danger">Inadimplente</span>;
-      default: return <span className="badge badge-neutral">{status}</span>;
-    }
+  const handleExcluir = async (id: string) => {
+    if (!confirm('Deseja excluir este processo?')) return;
+    try {
+      await supabase.from('processos').delete().eq('id', id);
+      toast.success('Excluído'); carregarContratos();
+    } catch (e: any) { toast.error(e.message); }
   };
-
-  const filtrados = contratos.filter(c => {
-    const matchBusca = (c.cliente_nome?.toLowerCase().includes(busca.toLowerCase())) || (c.numero?.toLowerCase().includes(busca.toLowerCase())) || (c.finalidade?.toLowerCase().includes(busca.toLowerCase()));
-    const matchStatus = filtroStatus === 'todos' || c.status === filtroStatus;
-    return matchBusca && matchStatus;
-  });
 
   return (
     <div className="animate-in flex flex-col gap-6">
       <div className="page-header">
-        <div>
-          <h1 className="text-3xl font-light text-white tracking-widest">Contra<span className="font-bold">tos</span></h1>
-          <p className="text-muted text-sm mt-1">Gestão de contratos, parcelas e inadimplência.</p>
-        </div>
+        <h1 className="text-3xl font-light text-white tracking-widest uppercase">Processos & <span className="font-bold text-secondary">Contratos</span></h1>
         <div className="flex gap-2">
-          <button className="btn-outline" onClick={() => { carregarContratos(); carregarDados(); toast.success('Atualizado'); }}><RefreshCw size={16} /> Atualizar</button>
-          <button className="btn-primary" onClick={() => { setEditandoId(null); setModalNovo(true); }}><Plus size={18} /> Novo Contrato</button>
+            <button className="btn-outline" onClick={() => carregarContratos()}><RefreshCw size={16} /></button>
+            <button className="btn-primary" onClick={() => { setEditandoId(null); setModalNovo(true); }}><Plus size={18} /> Novo Contrato</button>
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="glass-panel p-4 flex gap-4 flex-wrap items-center">
-        <div className="search-bar flex-1 min-w-[250px]"><Search size={18} /><input type="text" placeholder="Buscar por cliente, número ou objeto..." value={busca} onChange={e => setBusca(e.target.value)} /></div>
-        <select className="dark-select" style={{ width: 'auto', minWidth: 160 }} value={filtroStatus} onChange={(e) => setFiltroStatus(e.target.value)}>
-          <option value="todos">Todos os Status</option>
-          <option value="ativo">Ativos</option><option value="concluido">Encerrados</option>
-          <option value="inadimplente">Inadimplentes</option><option value="suspenso">Suspensos</option>
-        </select>
-      </div>
+      <div className="glass-panel p-4 flex gap-4"><Search size={18} className="text-muted mt-2" /><input className="bg-transparent flex-1 text-white border-none focus:ring-0" placeholder="Buscar por cliente, número ou objeto..." value={busca} onChange={e => setBusca(e.target.value)} /></div>
 
-      {/* Table */}
       <div className="glass-panel overflow-hidden">
         <table className="dark-table">
-          <thead>
-            <tr>
-              <th>Contrato / Cliente</th><th className="hidden md:table-cell">Finalidade</th>
-              <th className="hidden lg:table-cell">Início / Fim</th>
-              <th style={{ textAlign: 'right' }}>Valor Total</th>
-              <th style={{ textAlign: 'center' }}>Status</th><th style={{ width: 120 }}></th>
-            </tr>
-          </thead>
+          <thead><tr><th>Identificação</th><th>Natureza</th><th>Local/Vara</th><th style={{ textAlign: 'right' }}>Honorários</th><th>Status</th><th></th></tr></thead>
           <tbody>
-            {filtrados.map(contrato => (
-              <React.Fragment key={contrato.id}>
-                <tr className="cursor-pointer" onClick={() => toggleExpand(contrato.id)}>
-                  <td>
-                    <div className="text-white font-semibold text-sm">#{contrato.numero}</div>
-                    <div className="text-muted text-xs">{contrato.cliente_nome}</div>
-                  </td>
-                  <td className="text-muted text-sm hidden md:table-cell">{contrato.finalidade}</td>
-                  <td className="text-sm hidden lg:table-cell">
-                    <div className="text-white/70">{new Date(contrato.data_inicio).toLocaleDateString('pt-BR')}</div>
-                    {contrato.data_fim && <div className="text-muted text-xs">Até {new Date(contrato.data_fim).toLocaleDateString('pt-BR')}</div>}
-                  </td>
-                  <td style={{ textAlign: 'right' }} className="font-semibold text-white">R$ {contrato.valor_total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-                  <td style={{ textAlign: 'center' }}>{getStatusBadge(contrato.status)}</td>
-                  <td>
-                    <div className="flex gap-1 justify-center">
-                      <button className="btn-icon text-white/50" onClick={(e) => { e.stopPropagation(); handleEditarContrato(contrato); }}><Edit2 size={16} /></button>
-                      <button className="btn-icon text-red-400" onClick={(e) => { e.stopPropagation(); handleExcluirContrato(contrato.id, contrato.numero); }}><Trash2 size={16} /></button>
-                      <ChevronRight size={18} className="text-muted mt-0.5" style={{ transform: expandedId === contrato.id ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }} />
+            {(contratos || []).filter(c => c.cliente_nome?.toLowerCase().includes(busca.toLowerCase())).map(c => (
+              <React.Fragment key={c.id}>
+                <tr className="cursor-pointer" onClick={() => toggleExpand(c.id)}>
+                  <td><div className="text-white font-medium">#{c.numero}</div><div className="text-xs text-muted">{c.cliente_nome}</div></td>
+                  <td><span className="text-[10px] bg-white/5 px-2 py-1 rounded text-white/60">{c.natureza || 'Cível'}</span></td>
+                  <td><div className="text-xs text-white/60">{c.tribunal || '-'}</div><div className="text-[10px] text-muted">{c.vara || '-'}</div></td>
+                  <td style={{ textAlign: 'right' }} className="text-white font-bold">R$ {c.valor_total?.toLocaleString('pt-BR')}</td>
+                  <td><span className="badge badge-success">{c.status}</span></td>
+                  <td style={{ textAlign: 'right' }}>
+                    <div className="flex gap-2 justify-end">
+                      <button onClick={(e) => { e.stopPropagation(); setEditandoId(c.id); setModalNovo(true); }} className="text-white/20 hover:text-white transition-colors"><Edit2 size={16} /></button>
+                      <button onClick={(e) => { e.stopPropagation(); handleExcluir(c.id); }} className="text-white/20 hover:text-red-400 transition-colors"><Trash2 size={16} /></button>
+                      <ChevronRight size={18} className="text-muted" style={{ transform: expandedId === c.id ? 'rotate(90deg)' : 'none' }} />
                     </div>
                   </td>
                 </tr>
-                {expandedId === contrato.id && (
+                {expandedId === c.id && (
                   <tr>
-                    <td colSpan={6} className="!p-0">
-                      <div className="p-4 bg-white/[0.01] border-t border-white/5">
-                        <div className="glass-panel p-4">
-                          <h4 className="text-white font-semibold mb-3">Pagamentos</h4>
-                          {loadingParcelas ? <div className="text-muted text-sm">Carregando...</div> : (
-                            <table className="dark-table text-sm">
-                              <thead><tr><th>Vencimento</th><th style={{ textAlign: 'right' }}>Valor</th><th style={{ textAlign: 'center' }}>Status</th><th></th></tr></thead>
+                    <td colSpan={6} className="bg-white/[0.01] p-6 border-t border-white/5">
+                      <div className="flex gap-4 mb-6">
+                        <button onClick={() => setActiveSubTab('pagamentos')} className={activeSubTab === 'pagamentos' ? 'text-white border-b-2 border-white pb-1 text-sm font-bold' : 'text-white/40 pb-1 text-sm'}>Financeiro</button>
+                        <button onClick={() => setActiveSubTab('prazos')} className={activeSubTab === 'prazos' ? 'text-white border-b-2 border-white pb-1 text-sm font-bold' : 'text-white/40 pb-1 text-sm'}>Prazos e Audiências</button>
+                        <button onClick={() => setActiveSubTab('arquivos')} className={activeSubTab === 'arquivos' ? 'text-white border-b-2 border-white pb-1 text-sm font-bold' : 'text-white/40 pb-1 text-sm'}>Documentos e Provas</button>
+                      </div>
+                      {activeSubTab === 'prazos' ? (
+                        <div className="space-y-4">
+                           <div className="flex gap-2 bg-white/5 p-3 rounded-lg border border-white/10">
+                              <input className="flex-1 dark-input text-xs" placeholder="Novo compromisso..." value={novaTarefaForm.titulo} onChange={e => setNovaTarefaForm({...novaTarefaForm, titulo: e.target.value})} />
+                              <input type="date" className="dark-input text-xs w-40" value={novaTarefaForm.data} onChange={e => setNovaTarefaForm({...novaTarefaForm, data: e.target.value})} />
+                              <button onClick={handleCriarTarefa} className="btn-primary px-4 text-xs">Agendar</button>
+                           </div>
+                           <div className="space-y-2">
+                             {loadingTarefas ? <p className="text-xs text-muted">Carregando...</p> : tarefas.map(t => (
+                               <div key={t.id} className="flex justify-between items-center p-3 bg-white/5 rounded border border-white/5">
+                                 <div className="flex items-center gap-2"><Gavel size={14} className="text-secondary" /><span className="text-sm text-white/80">{t.titulo}</span></div>
+                                 <span className="text-[10px] text-muted">{t.data_prazo ? new Date(t.data_prazo).toLocaleDateString('pt-BR') : 'S/ Data'}</span>
+                               </div>
+                             ))}
+                           </div>
+                        </div>
+                      ) : activeSubTab === 'arquivos' ? (
+                        <div className="space-y-4">
+                           <div className="flex justify-between items-center bg-white/5 p-4 rounded-lg border border-dashed border-white/20">
+                             <div className="flex items-center gap-3">
+                               <UploadCloud size={24} className="text-muted" />
+                               <div>
+                                 <p className="text-sm text-white">Upload de Documentos</p>
+                                 <p className="text-[10px] text-muted uppercase">PDF, PNG, JPG até 10MB</p>
+                               </div>
+                             </div>
+                             <label className="btn-primary flex items-center gap-2 cursor-pointer py-1 px-4 text-xs">
+                               <Plus size={14} /> {uploading ? 'Enviando...' : 'Selecionar'}
+                               <input type="file" className="hidden" onChange={handleUploadArquivo} disabled={uploading} />
+                             </label>
+                           </div>
+                           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                             {loadingArquivos ? <p className="text-xs text-muted">Buscando cofre...</p> : arquivos.map(arq => (
+                               <div key={arq.id} className="flex justify-between items-center p-3 bg-white/5 rounded-lg border border-white/5 group">
+                                 <div className="flex items-center gap-3">
+                                   <div className="p-2 bg-secondary/10 rounded"><FileText size={16} className="text-secondary" /></div>
+                                   <div>
+                                     <p className="text-xs text-white truncate max-w-[150px]">{arq.nome}</p>
+                                     <p className="text-[10px] text-muted lowercase">{arq.formato} • {new Date(arq.created_at!).toLocaleDateString('pt-BR')}</p>
+                                   </div>
+                                 </div>
+                                 <div className="flex gap-2">
+                                   <a href={arq.url} target="_blank" rel="noreferrer" className="p-2 text-white/20 hover:text-white transition-colors"><Download size={14} /></a>
+                                   <button onClick={() => handleExcluirArquivo(arq.id, arq.url)} className="p-2 text-white/20 hover:text-red-400 transition-colors"><Trash2 size={14} /></button>
+                                 </div>
+                               </div>
+                             ))}
+                           </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-6">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="glass-panel p-4 text-center"><p className="text-[10px] text-muted uppercase tracking-tighter">Valor Honorários</p><p className="text-white font-bold text-lg">R$ {c.valor_total?.toLocaleString('pt-BR')}</p></div>
+                            <div className="glass-panel p-4 text-center"><p className="text-[10px] text-muted uppercase tracking-tighter">Valor Causa</p><p className="text-white font-bold text-lg">R$ {c.valor_causa?.toLocaleString('pt-BR') || '---'}</p></div>
+                          </div>
+                          <div className="glass-panel overflow-hidden">
+                            <table className="dark-table text-[10px]">
+                              <thead><tr><th>Vencimento</th><th>Valor</th><th>Status</th><th>Pagamento</th></tr></thead>
                               <tbody>
                                 {parcelas.map(p => (
                                   <tr key={p.id}>
                                     <td>{new Date(p.data_prevista).toLocaleDateString('pt-BR')}</td>
-                                    <td style={{ textAlign: 'right' }}>R$ {p.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-                                    <td style={{ textAlign: 'center' }}><span className={`badge ${p.status === 'pago' ? 'badge-success' : p.status === 'atrasado' ? 'badge-danger' : 'badge-warning'}`}>{p.status}</span></td>
-                                    <td style={{ textAlign: 'right' }}>{p.status !== 'pago' && <button className="btn-outline text-xs py-1" onClick={() => marcarComoPago(p.id)}>Baixar</button>}</td>
+                                    <td className="font-bold text-white">R$ {p.valor.toLocaleString('pt-BR')}</td>
+                                    <td><span className={p.status === 'pago' ? 'text-green-400' : 'text-yellow-400'}>{p.status.toUpperCase()}</span></td>
+                                    <td className="text-muted">{p.data_pagamento ? new Date(p.data_pagamento).toLocaleDateString('pt-BR') : '--'}</td>
                                   </tr>
                                 ))}
                               </tbody>
                             </table>
-                          )}
-                          <div className="flex gap-3 mt-4">
-                            <button className="btn-outline text-xs" onClick={() => gerarPDF(contrato)}><FileText size={14} /> Contrato</button>
-                            <button className="btn-outline text-xs" onClick={() => gerarProcuracao(contrato)}><FileText size={14} /> Procuração</button>
+                          </div>
+                          <div className="flex gap-2">
+                            <button onClick={() => {
+                                const html = generateContratoHTML({ nome: c.cliente_nome } as any, { numero: c.numero, valor_total: c.valor_total, parcelas: 1 } as any);
+                                const win = window.open('', '_blank'); win?.document.write(html); win?.document.close();
+                            }} className="btn-outline flex-1 text-[10px] py-2 flex items-center justify-center gap-1"><FileText size={12} /> Contrato PDF</button>
+                            <button onClick={() => {
+                                const html = generateProcuracaoHTML({ nome: c.cliente_nome } as any, { numero: c.numero, valor_total: c.valor_total, parcelas: 1 } as any);
+                                const win = window.open('', '_blank'); win?.document.write(html); win?.document.close();
+                            }} className="btn-outline flex-1 text-[10px] py-2 flex items-center justify-center gap-1"><FileText size={12} /> Procuração PDF</button>
                           </div>
                         </div>
-                      </div>
+                      )}
                     </td>
                   </tr>
                 )}
               </React.Fragment>
             ))}
-            {filtrados.length === 0 && !loading && (
-              <tr><td colSpan={6} className="text-center py-12 text-muted">Nenhum contrato encontrado.</td></tr>
-            )}
           </tbody>
         </table>
       </div>
 
-      {/* Modal  */}
       <AnimatePresence>
         {modalNovo && (
-          <div className="modal-overlay" onClick={() => setModalNovo(false)}>
-            <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }} className="modal-content glass-panel custom-scrollbar" onClick={e => e.stopPropagation()} style={{ maxWidth: '800px', padding: '2rem' }}>
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-serif text-xl text-white">{editandoId ? 'Editar Contrato' : 'Cadastro de Contrato'}</h2>
-                <button className="btn-icon" onClick={() => setModalNovo(false)}><X size={20} /></button>
-              </div>
-              <form onSubmit={handleSalvarContrato} className="flex flex-col gap-4">
-                <div className="input-group">
-                  <label>Cliente *</label>
-                  <select className="dark-select" value={form.cliente_id} onChange={e => setForm({ ...form, cliente_id: e.target.value })} required>
-                    <option value="">Selecione</option>{clientes.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
-                  </select>
+          <div className="modal-overlay">
+            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="modal-content glass-panel w-full max-w-4xl p-8 overflow-y-auto max-h-[90vh]">
+              <div className="flex justify-between items-center mb-6"><h2 className="text-2xl text-white font-serif uppercase tracking-widest">{editandoId ? 'Editar Processo' : 'Novo Processo'}</h2><button onClick={() => setModalNovo(false)}><X size={20} className="text-white/40" /></button></div>
+              <form onSubmit={handleSalvarContrato} className="grid grid-cols-1 md:grid-cols-2 gap-6 text-left">
+                <div className="space-y-4">
+                   <div className="input-group"><label>Cliente *</label>
+                      <select className="dark-select" value={form.cliente_id} onChange={e => setForm({...form, cliente_id: e.target.value})} required>
+                         <option value="">Selecione o Cliente</option>{clientes.map(cl => <option key={cl.id} value={cl.id}>{cl.nome}</option>)}
+                      </select>
+                   </div>
+                   <div className="input-group"><label>Número do Processo / Identificador *</label><input className="dark-input" value={form.numero} onChange={e => setForm({...form, numero: e.target.value})} required placeholder="Ex: 5001234-56.2024.8.21.0001" /></div>
+                   <div className="input-group"><label>Natureza da Ação</label>
+                      <select className="dark-select" value={form.natureza} onChange={e => setForm({...form, natureza: e.target.value})}>
+                         {NATUREZAS.map(n => <option key={n} value={n}>{n}</option>)}
+                      </select>
+                   </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="input-group"><label>Número *</label><input className="dark-input" value={form.numero} onChange={e => setForm({ ...form, numero: e.target.value })} required /></div>
-                  <div className="input-group"><label>Valor Total *</label><input className="dark-input" value={form.valor_total} onChange={e => setForm({ ...form, valor_total: applyMask(e.target.value) })} required /></div>
+                <div className="space-y-4">
+                   <div className="input-group"><label>Tribunal / Orgão</label><input className="dark-input" placeholder="Ex: TJRS, Justiça Federal" value={form.tribunal} onChange={e => setForm({...form, tribunal: e.target.value})} /></div>
+                   <div className="input-group"><label>Vara / Comarca</label><input className="dark-input" placeholder="Ex: 1ª Vara Cível de Porto Alegre" value={form.vara} onChange={e => setForm({...form, vara: e.target.value})} /></div>
+                   <div className="grid grid-cols-2 gap-2">
+                       <div className="input-group"><label>Honorários (R$)</label><input className="dark-input" value={form.valor_total} onChange={e => setForm({...form, valor_total: applyMask(e.target.value)})} required /></div>
+                       <div className="input-group"><label>Conta p/ Recebimento</label>
+                          <select className="dark-select" value={form.local_pagamento} onChange={e => setForm({...form, local_pagamento: e.target.value})}>
+                             <option value="">Selecione o Banco</option>
+                             {bancos.map(b => <option key={b.id} value={b.id}>{b.nome}</option>)}
+                          </select>
+                       </div>
+                   </div>
                 </div>
-                <div className="input-group"><label>Finalidade / Objeto</label><input className="dark-input" value={form.finalidade} onChange={e => setForm({ ...form, finalidade: e.target.value })} /></div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="input-group"><label>Início *</label><input type="date" className="dark-input" value={form.data_inicio} onChange={e => setForm({ ...form, data_inicio: e.target.value })} required /></div>
-                  <div className="input-group"><label>Fim</label><input type="date" className="dark-input" value={form.data_fim} onChange={e => setForm({ ...form, data_fim: e.target.value })} /></div>
-                </div>
-                <div className="input-group">
-                  <label>Forma de Pagamento</label>
-                  <div className="flex gap-3">
-                    <button type="button" onClick={() => setForm({ ...form, forma_pagamento: 'a_vista' })} className={form.forma_pagamento === 'a_vista' ? 'btn-primary flex-1' : 'btn-outline flex-1'}>À Vista</button>
-                    <button type="button" onClick={() => setForm({ ...form, forma_pagamento: 'parcelado' })} className={form.forma_pagamento === 'parcelado' ? 'btn-primary flex-1' : 'btn-outline flex-1'}>Parcelado</button>
-                  </div>
-                </div>
-                {form.forma_pagamento === 'parcelado' && (
-                  <>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="input-group"><label>Qtd. Parcelas</label><input type="number" className="dark-input" value={form.qtd_parcelas} onChange={e => setForm({ ...form, qtd_parcelas: e.target.value })} /></div>
-                      <div className="input-group"><label>Data 1ª Parcela</label><input type="date" className="dark-input" value={form.data_primeira_parcela} onChange={e => setForm({ ...form, data_primeira_parcela: e.target.value })} /></div>
-                    </div>
-                    <div className="input-group">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input type="checkbox" checked={form.tem_entrada} onChange={e => setForm({ ...form, tem_entrada: e.target.checked })} className="w-4 h-4" />
-                        <span>Tem Entrada?</span>
-                      </label>
-                    </div>
-                    {form.tem_entrada && (
-                      <div className="input-group"><label>Valor da Entrada</label><input className="dark-input" value={form.valor_entrada} onChange={e => setForm({ ...form, valor_entrada: applyMask(e.target.value) })} /></div>
-                    )}
-                  </>
-                )}
-                {/* Distribuição de Comissão */}
-                <div className="input-group">
-                  <label>Distribuição de Comissão</label>
-                  <div className="flex flex-col gap-2">
-                    {form.distribuicao.map((d, idx) => (
-                      <div key={d.id} className="flex gap-2 items-center">
-                        <span className="text-white text-sm flex-1">{d.nome}</span>
-                        <input type="number" className="dark-input" style={{ width: 80 }} value={d.percentual} onChange={e => {
-                          const newDist = [...form.distribuicao];
-                          newDist[idx].percentual = parseFloat(e.target.value) || 0;
-                          setForm({ ...form, distribuicao: newDist });
-                        }} />
-                        <span className="text-muted text-sm">%</span>
-                        <button type="button" className="btn-icon text-red-400" onClick={() => setForm({ ...form, distribuicao: form.distribuicao.filter((_, i) => i !== idx) })}><Trash2 size={14} /></button>
-                      </div>
-                    ))}
-                    <select className="dark-select" value="" onChange={e => {
-                      const sel = staff.find(s => s.id === e.target.value);
-                      if (sel && !form.distribuicao.find(d => d.id === sel.id)) {
-                        setForm({ ...form, distribuicao: [...form.distribuicao, { id: sel.id, nome: sel.nome, percentual: 0 }] });
-                      }
-                    }}>
-                      <option value="">+ Adicionar colaborador</option>
-                      {staff.filter(s => !form.distribuicao.find(d => d.id === s.id)).map(s => <option key={s.id} value={s.id}>{s.nome}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <div className="flex justify-end gap-3 mt-4">
-                  <button type="button" className="btn-outline" onClick={() => setModalNovo(false)}>Cancelar</button>
-                  <button type="submit" className="btn-primary">Salvar Contrato</button>
+                <div className="md:col-span-2 flex justify-end gap-3 pt-6 border-t border-white/5">
+                   <button type="button" onClick={() => setModalNovo(false)} className="btn-outline px-6">Descartar</button>
+                   <button type="submit" className="btn-primary px-10">Pulsar Contrato na Teia</button>
                 </div>
               </form>
             </motion.div>

@@ -6,16 +6,18 @@ import {
 } from '@dnd-kit/core';
 import { useDroppable } from '@dnd-kit/core';
 import { useDraggable } from '@dnd-kit/core';
-import { Plus, X, Phone, FileText, DollarSign, GripVertical } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Plus, X, Phone, FileText, DollarSign, GripVertical, Trash2 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { toast } from 'sonner';
 import { Orcamento } from '../../../models';
+import { useAuth } from '../../../contexts/AuthContext';
 
 const COLUNAS = [
-  { id: 'prospeccao', label: 'Prospecção / Lead', color: '#ffffff' },
-  { id: 'enviado', label: 'Orçamento Enviado', color: '#f59e0b' },
-  { id: 'retornou', label: 'Em Negociação', color: '#8b5cf6' },
-  { id: 'nao_retornou', label: 'Não Retornou', color: '#ef4444' },
+  { id: 'prospeccao', label: 'Prospecção', color: '#ffffff' },
+  { id: 'apresentacao', label: 'Orçamento Enviado', color: '#f59e0b' },
+  { id: 'negociacao', label: 'Em Negociação', color: '#8b5cf6' },
+  { id: 'perda', label: 'Perda / Desistência', color: '#ef4444' },
   { id: 'virou_cliente', label: 'Fechado ✓', color: '#22c55e' }
 ];
 
@@ -23,10 +25,12 @@ const dropAnimation: DropAnimation = {
   sideEffects: defaultDropAnimationSideEffects({ styles: { active: { opacity: '0.5' } } }),
 };
 
-// --- Inline Kanban Components ---
-function KanbanCard({ card, isDragging }: { card: Orcamento; isDragging?: boolean }) {
+function KanbanCard({ card, onEdit, onDelete, isDragging }: { card: Orcamento; onEdit?: () => void; onDelete?: () => void; isDragging?: boolean }) {
   return (
-    <div className={`p-4 rounded-xl bg-white/[0.03] border border-white/5 ${isDragging ? 'opacity-50 shadow-2xl' : 'hover:bg-white/[0.06]'} transition-all cursor-grab active:cursor-grabbing`}>
+    <div className={`p-4 rounded-xl bg-white/[0.03] border border-white/5 ${isDragging ? 'opacity-50 shadow-2xl' : 'hover:bg-white/[0.06]'} transition-all group relative`}>
+      <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+         <button onClick={(e) => { e.stopPropagation(); onDelete?.(); }} className="p-1.5 hover:bg-red-500/20 text-white/20 hover:text-red-400 rounded transition-all"><Trash2 size={12} /></button>
+      </div>
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1">
           <h4 className="text-white text-sm font-semibold mb-1">{card.nome_prospect}</h4>
@@ -38,8 +42,18 @@ function KanbanCard({ card, isDragging }: { card: Orcamento; isDragging?: boolea
       </div>
       {card.descricao && <p className="text-muted text-xs mt-2 line-clamp-2">{card.descricao}</p>}
       {card.valor_proposto && (
-        <div className="mt-3 flex items-center gap-1 text-green-400 text-xs font-semibold">
-          <DollarSign size={12} /> R$ {card.valor_proposto.toLocaleString('pt-BR')}
+        <div className="mt-3 flex items-center justify-between">
+          <div className="flex items-center gap-1 text-green-400 text-xs font-semibold">
+            <DollarSign size={12} /> R$ {card.valor_proposto.toLocaleString('pt-BR')}
+          </div>
+          {card.status === 'virou_cliente' && (
+            <button 
+              onClick={(e) => { e.stopPropagation(); window.dispatchEvent(new CustomEvent('gerar-contrato', { detail: card })); }}
+              className="px-2 py-1 rounded bg-white text-black text-[10px] font-bold hover:bg-white/80 transition-colors"
+            >
+              Gerar Contrato
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -67,19 +81,21 @@ function DroppableColumn({ id, label, color, cards, children }: { id: string; la
   );
 }
 
-function DraggableCard({ card }: { card: Orcamento }) {
+function DraggableCard({ card, onDelete }: { card: Orcamento; onDelete?: () => void }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: card.id,
     data: card,
   });
   return (
-    <div ref={setNodeRef} {...listeners} {...attributes} style={{ opacity: isDragging ? 0.3 : 1 }}>
-      <KanbanCard card={card} />
+    <div ref={setNodeRef} {...listeners} {...attributes} style={{ opacity: isDragging ? 0.3 : 1 }} className="cursor-grab active:cursor-grabbing">
+      <KanbanCard card={card} onDelete={onDelete} />
     </div>
   );
 }
 
 export default function CRMPage() {
+  const { escritorioId } = useAuth();
+  const navigate = useNavigate();
   const [orcamentos, setOrcamentos] = useState<Orcamento[]>([]);
   const [modalNovo, setModalNovo] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -93,6 +109,7 @@ export default function CRMPage() {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
   const carregarOrcamentos = useCallback(async () => {
+    if (!escritorioId) return;
     setIsLoading(true);
     try {
       const { data, error } = await supabase.from('crm_orcamentos').select('*').order('created_at', { ascending: false });
@@ -103,24 +120,28 @@ export default function CRMPage() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [escritorioId]);
 
   useEffect(() => { carregarOrcamentos(); }, [carregarOrcamentos]);
 
+  useEffect(() => {
+    const handleGerarContrato = (e: any) => {
+      const lead = e.detail;
+      navigate('/dashboard/contratos', { state: { lead } });
+    };
+    window.addEventListener('gerar-contrato', handleGerarContrato);
+    return () => window.removeEventListener('gerar-contrato', handleGerarContrato);
+  }, [navigate]);
+
   const handleSalvar = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.nome_prospect) { toast.error('Nome do prospect é obrigatório.'); return; }
+    if (!form.nome_prospect || !escritorioId) { toast.error('Nome do prospect é obrigatório.'); return; }
     try {
-      const { data: me } = await supabase.auth.getUser();
-      if (!me.user) throw new Error('Usuário não autenticado');
-      const { data: profile } = await supabase.from('colaboradores').select('escritorio_id').eq('email', me.user.email).single();
-      if (!profile) throw new Error('Perfil não encontrado');
-
       const { data, error } = await supabase.from('crm_orcamentos').insert([{
         nome_prospect: form.nome_prospect, telefone_prospect: form.telefone_prospect,
         descricao: form.descricao, valor_proposto: form.valor_proposto ? parseFloat(form.valor_proposto) : null,
-        status: form.status, escritorio_id: profile.escritorio_id,
-        data_envio: form.status === 'enviado' ? new Date().toISOString().split('T')[0] : null,
+        status: form.status, escritorio_id: escritorioId,
+        data_envio: form.status === 'apresentacao' ? new Date().toISOString().split('T')[0] : null,
       }]).select().single();
       if (error) throw error;
 
@@ -131,6 +152,16 @@ export default function CRMPage() {
     } catch (e: any) {
       toast.error('Erro: ' + e.message);
     }
+  };
+
+  const handleExcluir = async (id: string) => {
+    if (!confirm('Tem certeza que deseja excluir esta prospecção?')) return;
+    try {
+      const { error } = await supabase.from('crm_orcamentos').delete().eq('id', id);
+      if (error) throw error;
+      setOrcamentos(prev => prev.filter(o => o.id !== id));
+      toast.success('Prospecção removida.');
+    } catch (e: any) { toast.error(e.message); }
   };
 
   const handleDragStart = (event: DragStartEvent) => setActiveCard(event.active.data.current as Orcamento);
@@ -149,8 +180,9 @@ export default function CRMPage() {
     try {
       const updateData: Partial<Orcamento> = { status: novoStatus };
       const hoje = new Date().toISOString().split('T')[0];
-      if (novoStatus === 'enviado') updateData.data_envio = hoje;
-      if (novoStatus === 'retornou' || novoStatus === 'nao_retornou') updateData.data_retorno = hoje;
+      if (novoStatus === 'apresentacao') updateData.data_envio = hoje;
+      if (novoStatus === 'negociacao' || novoStatus === 'perda') updateData.data_retorno = hoje;
+      
       const { error } = await supabase.from('crm_orcamentos').update(updateData).eq('id', id);
       if (error) throw error;
       toast.success('Status atualizado!');
@@ -164,8 +196,8 @@ export default function CRMPage() {
     <div className="animate-in flex flex-col gap-6 h-full">
       <div className="page-header">
         <div>
-          <h1 className="text-3xl font-light text-white tracking-widest">CRM / <span className="font-bold">Funil</span></h1>
-          <p className="text-muted text-sm mt-1">Gestão de leads, orçamentos e conversão.</p>
+          <h1 className="text-3xl font-light text-white tracking-widest uppercase">CRM / <span className="font-bold text-secondary">Funil de Vendas</span></h1>
+          <p className="text-muted text-sm mt-1">Gestão isolada de leads e orçamentos jurídicos.</p>
         </div>
         <button className="btn-primary" onClick={() => setModalNovo(true)}><Plus size={18} /> Nova Prospecção</button>
       </div>
@@ -176,7 +208,7 @@ export default function CRMPage() {
             const cards = orcamentos.filter(o => o.status === col.id);
             return (
               <DroppableColumn key={col.id} id={col.id} label={col.label} color={col.color} cards={cards}>
-                {cards.map(card => <DraggableCard key={card.id} card={card} />)}
+                {cards.map(card => <DraggableCard key={card.id} card={card} onDelete={() => handleExcluir(card.id)} />)}
               </DroppableColumn>
             );
           })}
@@ -186,29 +218,28 @@ export default function CRMPage() {
         </DragOverlay>
       </DndContext>
 
-      {/* New Lead Modal */}
       <AnimatePresence>
         {modalNovo && (
           <div className="modal-overlay" onClick={() => setModalNovo(false)}>
             <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }} className="modal-content glass-panel" style={{ maxWidth: '550px', padding: '2rem' }} onClick={e => e.stopPropagation()}>
               <div className="flex justify-between items-center mb-6">
-                <h3 className="text-serif text-xl text-white">Nova Prospecção</h3>
+                <h3 className="text-serif text-xl text-white uppercase tracking-widest">Registrar Lead</h3>
                 <button className="btn-icon" onClick={() => setModalNovo(false)}><X size={20} /></button>
               </div>
               <form onSubmit={handleSalvar} className="flex flex-col gap-4">
-                <div className="input-group"><label>Nome do Prospect *</label><input className="dark-input" value={form.nome_prospect} onChange={e => setForm({ ...form, nome_prospect: e.target.value })} required /></div>
-                <div className="input-group"><label>Telefone</label><input className="dark-input" value={form.telefone_prospect} onChange={e => setForm({ ...form, telefone_prospect: e.target.value })} /></div>
-                <div className="input-group"><label>Descrição</label><textarea className="dark-textarea" rows={3} value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} /></div>
-                <div className="input-group"><label>Valor Proposto (R$)</label><input type="number" step="0.01" className="dark-input" value={form.valor_proposto} onChange={e => setForm({ ...form, valor_proposto: e.target.value })} /></div>
+                <div className="input-group"><label>Nome do Prospect *</label><input className="dark-input" value={form.nome_prospect} onChange={e => setForm({ ...form, nome_prospect: e.target.value })} required placeholder="Ex: João da Silva" /></div>
+                <div className="input-group"><label>Telefone / WhatsApp</label><input className="dark-input" value={form.telefone_prospect} onChange={e => setForm({ ...form, telefone_prospect: e.target.value })} placeholder="(11) 99999-9999" /></div>
+                <div className="input-group"><label>Objeto / Descrição</label><textarea className="dark-textarea" rows={3} value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} placeholder="Detalhes do caso..." /></div>
+                <div className="input-group"><label>Expectativa de Honorários (R$)</label><input type="number" step="0.01" className="dark-input font-bold" value={form.valor_proposto} onChange={e => setForm({ ...form, valor_proposto: e.target.value })} /></div>
                 <div className="input-group">
                   <label>Status Inicial</label>
                   <select className="dark-select" value={form.status} onChange={e => setForm({ ...form, status: e.target.value as Orcamento['status'] })}>
                     {COLUNAS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
                   </select>
                 </div>
-                <div className="flex justify-end gap-3 mt-4">
-                  <button type="button" className="btn-outline" onClick={() => setModalNovo(false)}>Cancelar</button>
-                  <button type="submit" className="btn-primary">Registrar Lead</button>
+                <div className="flex justify-end gap-3 mt-4 pt-6 border-t border-white/5">
+                  <button type="button" className="btn-outline" onClick={() => setModalNovo(false)}>Descartar</button>
+                  <button type="submit" className="btn-primary px-8">Salvar no Funil</button>
                 </div>
               </form>
             </motion.div>

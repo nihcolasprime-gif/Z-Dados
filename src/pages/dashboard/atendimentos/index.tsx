@@ -2,8 +2,10 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   CheckSquare, Plus, Search, ChevronRight, X,
-  FileText, Paperclip, Clock, User, Trash2, Send
+  FileText, Paperclip, Clock, User, Trash2, Send,
+  Briefcase, DollarSign
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
 import { toast } from 'sonner';
 
@@ -19,6 +21,7 @@ interface Atendimento {
 }
 
 export default function AtendimentosPage() {
+  const navigate = useNavigate();
   const [atendimentos, setAtendimentos] = useState<Atendimento[]>([]);
   const [busca, setBusca] = useState('');
   const [clientes, setClientes] = useState<{ id: string, nome: string }[]>([]);
@@ -27,9 +30,14 @@ export default function AtendimentosPage() {
   const [loading, setLoading] = useState(true);
 
   const [form, setForm] = useState({
-    cliente_id: '', titulo: '', descricao: '',
+    cliente_id: '', 
+    nome_avulso: '', // Para quem ainda não é cliente
+    titulo: '', 
+    descricao: '',
     data: new Date().toISOString().split('T')[0],
-    status: 'concluido' as 'concluido' | 'em_andamento' | 'agendado'
+    status: 'concluido' as 'concluido' | 'em_andamento' | 'agendado',
+    cobrar_consulta: false,
+    valor_consulta: '150,00'
   });
 
   useEffect(() => { carregarAtendimentos(); carregarClientes(); }, []);
@@ -54,18 +62,55 @@ export default function AtendimentosPage() {
 
   const handleSalvarAtendimento = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.cliente_id || !form.titulo) { toast.error('Preencha os campos obrigatórios.'); return; }
+    if ((!form.cliente_id && !form.nome_avulso) || !form.titulo) { 
+      toast.error('Preencha o cliente (ou nome) e o título.'); return; 
+    }
     try {
       const cliente = clientes.find(c => c.id === form.cliente_id);
-      const { error } = await supabase.from('atendimentos').insert([{
-        ...form, cliente_nome: cliente?.nome || '', documentos: []
-      }]);
+      const nomeExibicao = cliente ? cliente.nome : form.nome_avulso;
+      
+      const { data: newAtend, error } = await supabase.from('atendimentos').insert([{
+        cliente_id: form.cliente_id || null,
+        cliente_nome: nomeExibicao,
+        titulo: form.titulo,
+        descricao: form.descricao,
+        data: form.data,
+        status: form.status,
+        documentos: []
+      }]).select().single();
+      
       if (error) throw error;
-      toast.success('Atendimento registrado!');
+
+      if (form.cobrar_consulta) {
+        await supabase.from('transacoes').insert([{
+          tipo: 'receita',
+          valor: parseFloat(form.valor_consulta.replace(',', '.')),
+          data: form.data,
+          entidade: `Consulta: ${nomeExibicao}`,
+          status: 'recebido',
+          concretizado: true,
+          referencia: `ATEND-${newAtend.id.substring(0,4)}`,
+          escritorio_id: 'ESC-001'
+        }]);
+      }
+
+      toast.success('Atendimento e fluxo financeiro registrados!');
       setModalNovo(false);
-      setForm({ cliente_id: '', titulo: '', descricao: '', data: new Date().toISOString().split('T')[0], status: 'concluido' });
+      setForm({ cliente_id: '', nome_avulso: '', titulo: '', descricao: '', data: new Date().toISOString().split('T')[0], status: 'concluido', cobrar_consulta: false, valor_consulta: '150,00' });
       carregarAtendimentos();
     } catch (e: any) { toast.error('Erro: ' + e.message); }
+  };
+
+  const moverParaCRM = (atend: Atendimento) => {
+    navigate('/dashboard/crm', { 
+      state: { 
+        lead: { 
+          nome_prospect: atend.cliente_nome, 
+          descricao: atend.descricao,
+          status: 'prospeccao'
+        } 
+      } 
+    });
   };
 
   const filtrados = atendimentos.filter(a =>
@@ -140,7 +185,8 @@ export default function AtendimentosPage() {
                       </div>
                     </div>
                     <div className="mt-4 flex gap-2">
-                      <button className="btn-outline text-xs"><Trash2 size={14} className="text-red-400" /> Excluir</button>
+                      <button onClick={(e) => { e.stopPropagation(); moverParaCRM(atend); }} className="btn-primary text-xs py-1.5"><Briefcase size={14} /> Mover p/ CRM</button>
+                      <button className="btn-outline text-xs py-1.5"><Trash2 size={14} className="text-red-400" /> Excluir</button>
                     </div>
                   </div>
                 </motion.div>
@@ -166,16 +212,45 @@ export default function AtendimentosPage() {
                 <button className="btn-icon" onClick={() => setModalNovo(false)}><X size={20} /></button>
               </div>
               <form onSubmit={handleSalvarAtendimento} className="flex flex-col gap-4">
-                <div className="input-group">
-                  <label>Cliente *</label>
-                  <select className="dark-select" value={form.cliente_id} onChange={e => setForm({ ...form, cliente_id: e.target.value })} required>
-                    <option value="">Selecione o cliente</option>
-                    {clientes.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
-                  </select>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="input-group">
+                    <label>Cliente Cadastrado</label>
+                    <select className="dark-select" value={form.cliente_id} onChange={e => setForm({ ...form, cliente_id: e.target.value, nome_avulso: '' })}>
+                      <option value="">Selecione se já existir</option>
+                      {clientes.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                    </select>
+                  </div>
+                  <div className="input-group">
+                    <label>Ou Nome do Novo Prospecto</label>
+                    <input className="dark-input" placeholder="Se ainda não for cliente..." value={form.nome_avulso} onChange={e => setForm({ ...form, nome_avulso: e.target.value, cliente_id: '' })} />
+                  </div>
                 </div>
-                <div className="input-group"><label>Título *</label><input className="dark-input" placeholder="Ex: Reunião Presencial, Coleta de Docs..." value={form.titulo} onChange={e => setForm({ ...form, titulo: e.target.value })} required /></div>
-                <div className="input-group"><label>Data *</label><input type="date" className="dark-input" value={form.data} onChange={e => setForm({ ...form, data: e.target.value })} required /></div>
-                <div className="input-group"><label>Descrição</label><textarea className="dark-textarea" rows={4} placeholder="Descreva o que foi tratado..." value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} /></div>
+                <div className="input-group"><label>Título do Atendimento *</label><input className="dark-input" placeholder="Ex: Consulta sobre Inventário" value={form.titulo} onChange={e => setForm({ ...form, titulo: e.target.value })} required /></div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="input-group"><label>Data *</label><input type="date" className="dark-input" value={form.data} onChange={e => setForm({ ...form, data: e.target.value })} required /></div>
+                  <div className="input-group">
+                    <label>Status</label>
+                    <select className="dark-select" value={form.status} onChange={e => setForm({ ...form, status: e.target.value as any })}>
+                      <option value="concluido">Concluído</option>
+                      <option value="em_andamento">Em Andamento</option>
+                      <option value="agendado">Agendado</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="input-group"><label>Notas do Atendimento (O que foi tratado)</label><textarea className="dark-textarea" rows={4} placeholder="Digite aqui o parecer inicial..." value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} /></div>
+                
+                <div className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/5">
+                   <div className="flex items-center gap-2">
+                     <input type="checkbox" id="cobrar" checked={form.cobrar_consulta} onChange={e => setForm({...form, cobrar_consulta: e.target.checked})} className="w-5 h-5 accent-secondary" />
+                     <label htmlFor="cobrar" className="text-sm text-white font-medium cursor-pointer">Cobrar Taxa de Consulta?</label>
+                   </div>
+                   {form.cobrar_consulta && (
+                     <div className="flex items-center gap-2">
+                       <span className="text-xs text-muted">R$</span>
+                       <input className="dark-input w-24 text-right" value={form.valor_consulta} onChange={e => setForm({...form, valor_consulta: e.target.value})} />
+                     </div>
+                   )}
+                </div>
                 <div className="flex justify-end gap-3 mt-4">
                   <button type="button" className="btn-outline" onClick={() => setModalNovo(false)}>Cancelar</button>
                   <button type="submit" className="btn-primary"><Send size={16} /> Salvar</button>
