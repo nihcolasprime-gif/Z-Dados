@@ -9,39 +9,48 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     async function checkAuthStatus() {
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      
-      if (sessionError || !session) {
-        setIsAuthenticated(false);
+      try {
+        // Tenta pegar a sessão rapidamente
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        
+        if (sessionError || !session) {
+          setIsAuthenticated(false);
+          setLoading(false);
+          return;
+        }
+        
+        setIsAuthenticated(true);
+
+        // Busca o perfil (assinatura/trial)
+        const { data, error: profileError } = await supabase
+          .from('perfis')
+          .select('assinatura_ativa, trial_until')
+          .eq('id', session.user.id)
+          .single();
+
+        if (profileError) {
+          console.error('Erro ao carregar perfil:', profileError);
+          // Em caso de erro de rede, podemos ser mais permissivos ou restritos. 
+          // Aqui, tentamos acesso zero se falhar totalmente.
+          setHasAccess(false);
+        } else {
+          const isTrialActive = data?.trial_until ? new Date(data.trial_until) > new Date() : false;
+          setHasAccess(data?.assinatura_ativa || isTrialActive);
+        }
+      } catch (err) {
+        console.error('Erro crítico na Proteção de Rota:', err);
+      } finally {
         setLoading(false);
-        return;
       }
-      
-      setIsAuthenticated(true);
-
-      // Verifica se a assinatura está ativa no banco
-      const { data, error } = await supabase
-        .from('perfis')
-        .select('assinatura_ativa')
-        .eq('id', session.user.id)
-        .single();
-
-      if (!error && data?.assinatura_ativa) {
-        setHasAccess(true);
-      } else {
-        setHasAccess(false);
-      }
-      
-      setLoading(false);
     }
     
     checkAuthStatus();
-
-    // Opcional: Escutar mudanças de Auth State em tempo real
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-       if (!session) {
+    
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+       if (event === 'SIGNED_OUT' || !session) {
          setIsAuthenticated(false);
          setHasAccess(false);
+         setLoading(false);
        }
     });
 
