@@ -19,17 +19,39 @@ export default function Login() {
     setLoading(true);
     
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
+      // 1. Limpa qualquer sessão anterior travada
+      await supabase.auth.signOut().catch(() => {});
       
+      // 2. Tenta o login com um Timeout de 15 segundos
+      const loginPromise = supabase.auth.signInWithPassword({ email, password });
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('TIMEOUT')), 15000)
+      );
+
+      const { data, error } = await Promise.race([loginPromise, timeoutPromise]) as any;
+
+      if (error) throw error;
+      if (!data?.session) throw new Error('Falha na sessão');
+
       toast.success('Acesso liberado. Bem-vindo de volta!');
-      navigate('/dashboard/finance');
+      
+      // Pequeno delay para garantir que o Supabase salvou o cookie/localStorage
+      setTimeout(() => {
+        window.location.href = '/dashboard/finance';
+      }, 500);
+
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Erro desconhecido';
-      toast.error(message === 'Invalid login credentials' 
-        ? 'Credenciais incorretas ou acesso bloqueado.' 
-        : 'Ocorreu um erro no servidor.');
-    } finally {
+      
+      if (message === 'TIMEOUT') {
+        toast.error('O servidor demorou muito para responder.', {
+          description: 'Verifique sua conexão ou tente novamente.'
+        });
+      } else {
+        toast.error(message === 'Invalid login credentials' 
+          ? 'Credenciais incorretas ou acesso bloqueado.' 
+          : 'Falha na autenticação: ' + message);
+      }
       setLoading(false);
     }
   };
