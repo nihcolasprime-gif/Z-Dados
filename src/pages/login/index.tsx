@@ -19,39 +19,42 @@ export default function Login() {
     setLoading(true);
     
     try {
-      // 1. Limpa qualquer sessão anterior travada
+      // 1. Limpeza agressiva para evitar "Auth Locks"
+      localStorage.removeItem('supabase.auth.token');
       await supabase.auth.signOut().catch(() => {});
       
-      // 2. Tenta o login com um Timeout de 15 segundos
-      const loginPromise = supabase.auth.signInWithPassword({ email, password });
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('TIMEOUT')), 15000)
-      );
+      // 2. Timeout de 10 segundos para não travar o botão
+      const timeout = setTimeout(() => {
+        setLoading(false);
+        toast.error('O sistema demorou muito para responder.', {
+          description: 'A rede pode estar lenta. Tente clicar novamente.'
+        });
+      }, 10000);
 
-      const { data, error } = await Promise.race([loginPromise, timeoutPromise]) as any;
+      const { data, error } = await supabase.auth.signInWithPassword({ 
+        email: email.trim(), 
+        password 
+      });
+
+      clearTimeout(timeout);
 
       if (error) throw error;
-      if (!data?.session) throw new Error('Falha na sessão');
-
-      toast.success('Acesso liberado. Bem-vindo de volta!');
       
-      // Pequeno delay para garantir que o Supabase salvou o cookie/localStorage
-      setTimeout(() => {
-        window.location.href = '/dashboard/finance';
-      }, 500);
+      if (data?.session) {
+        toast.success('Acesso liberado!');
+        // 3. Força o recarregamento total para evitar conflitos de rotas
+        setTimeout(() => {
+          window.location.href = '/dashboard/finance';
+        }, 500);
+      } else {
+        throw new Error('Erro ao criar sessão');
+      }
 
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Erro desconhecido';
-      
-      if (message === 'TIMEOUT') {
-        toast.error('O servidor demorou muito para responder.', {
-          description: 'Verifique sua conexão ou tente novamente.'
-        });
-      } else {
-        toast.error(message === 'Invalid login credentials' 
-          ? 'Credenciais incorretas ou acesso bloqueado.' 
-          : 'Falha na autenticação: ' + message);
-      }
+      toast.error(message === 'Invalid login credentials' 
+        ? 'Credenciais incorretas.' 
+        : 'Erro: ' + message);
       setLoading(false);
     }
   };
