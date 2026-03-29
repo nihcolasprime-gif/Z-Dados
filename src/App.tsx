@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { GlassLayout } from './components/Layout/GlassLayout';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import Login from './pages/login';
-import AguardandoAprovacao from './pages/AguardandoAprovacao';
 import Configuracoes from './pages/Configuracoes';
 import NotFound from './pages/NotFound';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -43,7 +42,6 @@ export function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/login" replace />} />
           <Route path="/login" element={<Login />} />
-          <Route path="/aguardando-aprovacao" element={<AguardandoAprovacao />} />
           <Route path="/update-password" element={<Suspense fallback={<DashboardLoadingFallback />}><UpdatePassword /></Suspense>} />
 
           <Route

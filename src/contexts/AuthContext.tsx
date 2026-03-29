@@ -9,7 +9,6 @@ interface AuthContextType {
   profile: Colaborador | null;
   role: string | null;
   escritorioId: string | null;
-  hasAccess: boolean;
   loading: boolean;
 }
 
@@ -29,39 +28,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<Colaborador | null>(null);
   const [escritorioId, setEscritorioId] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
-  const [hasAccess, setHasAccess] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const fetchProfile = useCallback(async (userObj: User) => {
     try {
-      // Busca dados de colaborador e dados de assinatura (perfis) em paralelo
-      const [colaboradorRes, perfilRes] = await Promise.all([
-        supabase.from('colaboradores').select('*').eq('email', userObj.email).maybeSingle(),
-        supabase.from('perfis').select('assinatura_ativa, trial_until').eq('id', userObj.id).maybeSingle()
-      ]);
+      const { data } = await supabase
+        .from('colaboradores')
+        .select('*')
+        .eq('email', userObj.email)
+        .maybeSingle();
 
-      if (colaboradorRes.data) {
-        setProfile(colaboradorRes.data);
-        setEscritorioId(colaboradorRes.data.escritorio_id);
-        const userRole = colaboradorRes.data.tipo === 'associado' ? 'collaborator' : colaboradorRes.data.tipo;
+      if (data) {
+        setProfile(data);
+        setEscritorioId(data.escritorio_id);
+        const userRole = data.tipo === 'associado' ? 'collaborator' : data.tipo;
         setRole(userRole);
-      }
-
-      // Bypass do Proprietário: Liberação instantânea
-      if (userObj.email?.toLowerCase() === 'zlinemkt@gmail.com') {
-        setHasAccess(true);
-      }
-
-      if (perfilRes.data) {
-        const now = new Date();
-        const trialUntil = perfilRes.data.trial_until ? new Date(perfilRes.data.trial_until) : null;
-        const isTrialValid = trialUntil ? trialUntil > now : false;
-        
-        if (userObj.email?.toLowerCase() === 'zlinemkt@gmail.com') {
-          setHasAccess(true);
-        } else {
-          setHasAccess(perfilRes.data.assinatura_ativa || isTrialValid);
-        }
       }
     } catch (err) {
       console.error('Erro ao buscar perfil completo:', err);
@@ -112,9 +93,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(newUser);
       
       if (newUser) {
-        if (newUser.email?.toLowerCase() === 'zlinemkt@gmail.com') {
-          setHasAccess(true);
-        }
         await fetchProfile(newUser);
       } else if (event === 'SIGNED_OUT') {
         setProfile(null);
@@ -133,7 +111,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [fetchProfile]);
 
   return (
-    <AuthContext.Provider value={{ session, user, profile, escritorioId, role, hasAccess, loading }}>
+    <AuthContext.Provider value={{ session, user, profile, escritorioId, role, loading }}>
       {children}
     </AuthContext.Provider>
   );

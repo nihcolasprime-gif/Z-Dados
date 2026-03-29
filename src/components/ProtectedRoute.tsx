@@ -7,7 +7,7 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
-  const { session, loading, hasAccess } = useAuth();
+  const { session, loading } = useAuth();
 
   if (loading) {
     return (
@@ -22,10 +22,6 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
 
   if (!session) {
     return <Navigate to="/login" replace />;
-  }
-
-  if (!hasAccess) {
-    return <Navigate to="/aguardando-aprovacao" replace />;
   }
 
   return <>{children}</>;
